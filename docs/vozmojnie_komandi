@@ -1,0 +1,21 @@
+# Текущая погода
+python weather.py now Москва
+python weather.py now London
+python weather.py now "New York"
+
+# Прогноз (по умолчанию 3 дня)
+python weather.py forecast Москва
+python weather.py forecast London --days 5
+
+# Избранное
+python weather.py favorites list                 # показать список
+python weather.py favorites add Москва           # добавить город
+python weather.py favorites remove Москва        # удалить город
+
+# Настройки
+python weather.py settings show                  # показать настройки
+python weather.py settings units C               # переключить на Цельсий
+python weather.py settings units F               # переключить на Фаренгейт
+
+# Справка
+python weather.py --help
