@@ -175,6 +175,14 @@ jobs:
           echo "========="
           echo ""
           
+          # Устанавливаем выбранные единицы измерения
+          UNITS="${{ github.event.inputs.units_value }}"
+          if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
+            echo "Setting units to $UNITS"
+            python weather.py settings units "$UNITS"
+            echo ""
+          fi
+          
           echo "1. Current Weather"
           echo "------------------"
           python weather.py now Moscow
@@ -199,9 +207,6 @@ jobs:
           echo "4. Settings"
           echo "-----------"
           python weather.py settings show
-          python weather.py settings units F
-          python weather.py settings show
-          python weather.py settings units C
         fi
       env:
         PYTHONIOENCODING: utf-8
@@ -209,7 +214,6 @@ jobs:
   demo:
     name: Demo Run
     runs-on: ubuntu-latest
-    # ИСПРАВЛЕНО: теперь запускается при любом событии
     if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
     steps:
@@ -230,6 +234,19 @@ jobs:
         echo "🌍 WeatherEye Demo Run"
         echo "======================"
         echo "Trigger: ${{ github.event_name }}"
+        echo ""
+        
+        # ИСПРАВЛЕНИЕ: устанавливаем выбранные единицы измерения
+        UNITS="${{ github.event.inputs.units_value }}"
+        if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
+          echo "Setting units to $UNITS"
+          python weather.py settings units "$UNITS"
+          echo ""
+        fi
+        
+        # Показываем текущие настройки
+        echo "Current settings:"
+        python weather.py settings show
         echo ""
         
         echo "📌 Moscow"
