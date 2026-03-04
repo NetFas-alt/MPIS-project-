@@ -21,19 +21,20 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
     
-    - name: Install dependencies
+    - name: Upgrade pip and install dependencies
       run: |
-        python3.8 -m pip install --upgrade pip
-        python3.8 -m pip install requests
-        python3.8 -m pip install pytest pytest-cov flake8 black mypy
+        python -m pip install --upgrade pip
+        pip install requests
+        pip install pytest pytest-cov flake8 black mypy
+      shell: bash
     
     - name: Lint with flake8
       run: |
@@ -61,15 +62,18 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
-    - name: Install dependencies
-      run: pip install requests
+    - name: Upgrade pip and install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+      shell: bash
     
     - name: Demo - Current Weather in Multiple Cities
       run: |
@@ -110,7 +114,7 @@ jobs:
         python weather.py favorites list
     
     - name: Upload test results
-      uses: actions/upload-artifact@v4  # <--- ИЗМЕНЕНО С v3 НА v4
+      uses: actions/upload-artifact@v4
       with:
         name: weather-demo-output
         path: |
@@ -123,15 +127,18 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
     
-    - name: Install dependencies
-      run: pip install requests
+    - name: Upgrade pip and install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+      shell: bash
     
     - name: Test with minimal dependencies
       run: |
