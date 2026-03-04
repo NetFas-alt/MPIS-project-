@@ -13,18 +13,18 @@ on:
         default: 'weather'
         type: choice
         options:
-          - weather - Погода (now/forecast)
-          - favorites - Избранное (add/list/remove)
-          - settings - Настройки (show/units)
-          - full_demo - Полная демонстрация
+          - 'weather - Погода (now/forecast)'
+          - 'favorites - Избранное (add/list/remove)'
+          - 'settings - Настройки (show/units)'
+          - 'full_demo - Полная демонстрация'
       weather_command:
         description: '🌤️ Команда погоды (для weather группы)'
         required: false
         default: 'now'
         type: choice
         options:
-          - now
-          - forecast
+          - 'now'
+          - 'forecast'
       city:
         description: '🏙️ Город'
         required: false
@@ -41,9 +41,9 @@ on:
         default: 'list'
         type: choice
         options:
-          - list - Показать все
-          - add - Добавить город
-          - remove - Удалить город
+          - 'list - Показать все'
+          - 'add - Добавить город'
+          - 'remove - Удалить город'
       favorites_city:
         description: '🏙️ Город для избранного (add/remove)'
         required: false
@@ -55,16 +55,16 @@ on:
         default: 'show'
         type: choice
         options:
-          - show - Показать настройки
-          - units - Сменить единицы
+          - 'show - Показать настройки'
+          - 'units - Сменить единицы'
       units_value:
         description: '🌡️ Единицы измерения (C/F)'
         required: false
         default: 'C'
         type: choice
         options:
-          - C
-          - F
+          - 'C'
+          - 'F'
   schedule:
     - cron: '0 */6 * * *'
 
@@ -163,98 +163,90 @@ if __name__ == '__main__':
           echo ""
         }
         
-        case "$COMMAND_GROUP" in
-          "weather - Погода (now/forecast)")
-            CITY="${{ github.event.inputs.city }}"
-            WEATHER_CMD="${{ github.event.inputs.weather_command }}"
-            DAYS="${{ github.event.inputs.forecast_days }}"
-            
-            echo "🌤️ ГРУППА: ПОГОДА"
-            echo "=================="
-            
-            if [ "$WEATHER_CMD" == "now" ]; then
-              run_cmd "python weather.py now \"$CITY\""
-            else
-              run_cmd "python weather.py forecast \"$CITY\" --days $DAYS"
-            fi
-            ;;
+        if [ "$COMMAND_GROUP" = "weather - Погода (now/forecast)" ]; then
+          CITY="${{ github.event.inputs.city }}"
+          WEATHER_CMD="${{ github.event.inputs.weather_command }}"
+          DAYS="${{ github.event.inputs.forecast_days }}"
           
-          "favorites - Избранное (add/list/remove)")
-            FAV_ACTION="${{ github.event.inputs.favorites_action }}"
-            FAV_CITY="${{ github.event.inputs.favorites_city }}"
-            
-            echo "⭐ ГРУППА: ИЗБРАННОЕ"
-            echo "==================="
-            
-            case "$FAV_ACTION" in
-              list*)
-                run_cmd "python weather.py favorites list"
-                ;;
-              add*)
-                run_cmd "python weather.py favorites add \"$FAV_CITY\""
-                run_cmd "python weather.py favorites list"
-                ;;
-              remove*)
-                run_cmd "python weather.py favorites remove \"$FAV_CITY\""
-                run_cmd "python weather.py favorites list"
-                ;;
-            esac
-            ;;
+          echo "🌤️ ГРУППА: ПОГОДА"
+          echo "=================="
           
-          "settings - Настройки (show/units)")
-            SETTINGS_ACTION="${{ github.event.inputs.settings_action }}"
-            UNITS="${{ github.event.inputs.units_value }}"
-            
-            echo "⚙️ ГРУППА: НАСТРОЙКИ"
-            echo "===================="
-            
-            if [ "$SETTINGS_ACTION" == "show" ]; then
-              run_cmd "python weather.py settings show"
-            else
-              run_cmd "python weather.py settings units $UNITS"
-              run_cmd "python weather.py settings show"
-            fi
-            ;;
+          if [ "$WEATHER_CMD" = "now" ]; then
+            run_cmd "python weather.py now \"$CITY\""
+          else
+            run_cmd "python weather.py forecast \"$CITY\" --days $DAYS"
+          fi
+        elif [ "$COMMAND_GROUP" = "favorites - Избранное (add/list/remove)" ]; then
+          FAV_ACTION="${{ github.event.inputs.favorites_action }}"
+          FAV_CITY="${{ github.event.inputs.favorites_city }}"
           
-          "full_demo - Полная демонстрация")
-            echo "🎭 ПОЛНАЯ ДЕМОНСТРАЦИЯ ВСЕХ КОМАНД"
-            echo "==================================="
-            
-            # Weather commands
-            echo "🌤️ ТЕКУЩАЯ ПОГОДА"
-            echo "-------------------"
-            run_cmd "python weather.py now Moscow"
-            run_cmd "python weather.py now London"
-            
-            echo "📅 ПРОГНОЗ"
-            echo "-------------------"
-            run_cmd "python weather.py forecast Moscow --days 3"
-            
-            # Favorites commands
-            echo "⭐ ИЗБРАННОЕ"
-            echo "-------------------"
-            run_cmd "python weather.py favorites list"
-            run_cmd "python weather.py favorites add Moscow"
-            run_cmd "python weather.py favorites add London"
-            run_cmd "python weather.py favorites add Tokyo"
-            run_cmd "python weather.py favorites list"
-            run_cmd "python weather.py favorites remove London"
-            run_cmd "python weather.py favorites list"
-            
-            # Settings commands
-            echo "⚙️ НАСТРОЙКИ"
-            echo "-------------------"
+          echo "⭐ ГРУППА: ИЗБРАННОЕ"
+          echo "==================="
+          
+          case "$FAV_ACTION" in
+            "list - Показать все")
+              run_cmd "python weather.py favorites list"
+              ;;
+            "add - Добавить город")
+              run_cmd "python weather.py favorites add \"$FAV_CITY\""
+              run_cmd "python weather.py favorites list"
+              ;;
+            "remove - Удалить город")
+              run_cmd "python weather.py favorites remove \"$FAV_CITY\""
+              run_cmd "python weather.py favorites list"
+              ;;
+          esac
+        elif [ "$COMMAND_GROUP" = "settings - Настройки (show/units)" ]; then
+          SETTINGS_ACTION="${{ github.event.inputs.settings_action }}"
+          UNITS="${{ github.event.inputs.units_value }}"
+          
+          echo "⚙️ ГРУППА: НАСТРОЙКИ"
+          echo "===================="
+          
+          if [ "$SETTINGS_ACTION" = "show - Показать настройки" ]; then
             run_cmd "python weather.py settings show"
-            run_cmd "python weather.py settings units F"
+          else
+            run_cmd "python weather.py settings units $UNITS"
             run_cmd "python weather.py settings show"
-            run_cmd "python weather.py settings units C"
-            
-            # Help
-            echo "📚 СПРАВКА"
-            echo "-------------------"
-            run_cmd "python weather.py --help"
-            ;;
-        esac
+          fi
+        elif [ "$COMMAND_GROUP" = "full_demo - Полная демонстрация" ]; then
+          echo "🎭 ПОЛНАЯ ДЕМОНСТРАЦИЯ ВСЕХ КОМАНД"
+          echo "==================================="
+          
+          # Weather commands
+          echo "🌤️ ТЕКУЩАЯ ПОГОДА"
+          echo "-------------------"
+          run_cmd "python weather.py now Moscow"
+          run_cmd "python weather.py now London"
+          
+          echo "📅 ПРОГНОЗ"
+          echo "-------------------"
+          run_cmd "python weather.py forecast Moscow --days 3"
+          
+          # Favorites commands
+          echo "⭐ ИЗБРАННОЕ"
+          echo "-------------------"
+          run_cmd "python weather.py favorites list"
+          run_cmd "python weather.py favorites add Moscow"
+          run_cmd "python weather.py favorites add London"
+          run_cmd "python weather.py favorites add Tokyo"
+          run_cmd "python weather.py favorites list"
+          run_cmd "python weather.py favorites remove London"
+          run_cmd "python weather.py favorites list"
+          
+          # Settings commands
+          echo "⚙️ НАСТРОЙКИ"
+          echo "-------------------"
+          run_cmd "python weather.py settings show"
+          run_cmd "python weather.py settings units F"
+          run_cmd "python weather.py settings show"
+          run_cmd "python weather.py settings units C"
+          
+          # Help
+          echo "📚 СПРАВКА"
+          echo "-------------------"
+          run_cmd "python weather.py --help"
+        fi
         
         echo ""
         echo "✅ Выполнение команд завершено"
@@ -371,7 +363,7 @@ if __name__ == '__main__':
         echo "  Validate: ${{ needs.validate.result }}"
         echo ""
         
-        if [ "${{ needs.test.result }}" == "success" ] && [ "${{ needs.validate.result }}" == "success" ]; then
+        if [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.validate.result }}" = "success" ]; then
           echo "✅ Все команды работают корректно!"
         else
           echo "⚠️ Некоторые проверки не прошли"
