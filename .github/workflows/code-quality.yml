@@ -1,0 +1,60 @@
+name: Code Quality
+
+on:
+  push:
+    paths:
+      - '**.py'
+  pull_request:
+    paths:
+      - '**.py'
+
+jobs:
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Run Bandit security linter
+      run: |
+        pip install bandit
+        bandit -r . -f json -o bandit-report.json || true
+    
+    - name: Upload security report
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-report
+        path: bandit-report.json
+
+  complexity:
+    name: Code Complexity
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install radon
+      run: pip install radon
+    
+    - name: Check cyclomatic complexity
+      run: |
+        radon cc weather.py -s -a
+        radon mi weather.py -s
+
+  dependencies:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Check for outdated dependencies
+      run: |
+        pip install pip-outdated
+        pip-outdated requirements.txt || true
+    
+    - name: Security vulnerability scan
+      run: |
+        pip install safety
+        safety check -r requirements.txt || true
