@@ -122,15 +122,25 @@ jobs:
         echo "==========================="
         
         COMMAND_GROUP="${{ github.event.inputs.command_group }}"
+        UNITS="${{ github.event.inputs.units_value }}"
+        
+        # Устанавливаем единицы измерения, если выбраны
+        if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
+          echo "🔧 Setting units to $UNITS"
+          python weather.py settings units "$UNITS"
+          echo ""
+        fi
         
         if [ "$COMMAND_GROUP" = "weather" ]; then
           CITY="${{ github.event.inputs.city }}"
           WEATHER_CMD="${{ github.event.inputs.weather_command }}"
           DAYS="${{ github.event.inputs.forecast_days }}"
           
-          echo "Weather Commands"
-          echo "================"
+          echo "🌤️ Weather Commands"
+          echo "==================="
           echo "City: $CITY"
+          echo "Command: $WEATHER_CMD"
+          echo "Days: $DAYS"
           echo ""
           
           if [ "$WEATHER_CMD" = "now" ]; then
@@ -143,8 +153,11 @@ jobs:
           FAV_ACTION="${{ github.event.inputs.favorites_action }}"
           FAV_CITY="${{ github.event.inputs.favorites_city }}"
           
-          echo "Favorites Commands"
-          echo "=================="
+          echo "⭐ Favorites Commands"
+          echo "===================="
+          echo "Action: $FAV_ACTION"
+          echo "City: $FAV_CITY"
+          echo ""
           
           if [ "$FAV_ACTION" = "list" ]; then
             python weather.py favorites list
@@ -160,8 +173,10 @@ jobs:
           SETTINGS_ACTION="${{ github.event.inputs.settings_action }}"
           UNITS="${{ github.event.inputs.units_value }}"
           
-          echo "Settings Commands"
-          echo "================="
+          echo "⚙️ Settings Commands"
+          echo "===================="
+          echo "Action: $SETTINGS_ACTION"
+          echo ""
           
           if [ "$SETTINGS_ACTION" = "show" ]; then
             python weather.py settings show
@@ -171,42 +186,58 @@ jobs:
           fi
           
         elif [ "$COMMAND_GROUP" = "full_demo" ]; then
-          echo "Full Demo"
-          echo "========="
+          echo "🎭 Full Demo"
+          echo "============"
           echo ""
           
-          # Устанавливаем выбранные единицы измерения
+          CITY="${{ github.event.inputs.city }}"
+          WEATHER_CMD="${{ github.event.inputs.weather_command }}"
+          DAYS="${{ github.event.inputs.forecast_days }}"
+          FAV_ACTION="${{ github.event.inputs.favorites_action }}"
+          FAV_CITY="${{ github.event.inputs.favorites_city }}"
           UNITS="${{ github.event.inputs.units_value }}"
-          if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
-            echo "Setting units to $UNITS"
-            python weather.py settings units "$UNITS"
-            echo ""
-          fi
           
-          echo "1. Current Weather"
+          echo "📋 Demo Configuration:"
+          echo "  • City: $CITY"
+          echo "  • Weather command: $WEATHER_CMD"
+          echo "  • Forecast days: $DAYS"
+          echo "  • Units: $UNITS"
+          echo "  • Favorites action: $FAV_ACTION"
+          echo "  • Favorites city: $FAV_CITY"
+          echo ""
+          
+          # 1. Weather Demo
+          echo "1. 🌤️ Weather Demo"
           echo "------------------"
-          python weather.py now Moscow
-          python weather.py now London
-          python weather.py now "${{ github.event.inputs.city }}"
+          if [ "$WEATHER_CMD" = "now" ]; then
+            python weather.py now "$CITY"
+          else
+            python weather.py forecast "$CITY" --days "$DAYS"
+          fi
           echo ""
           
-          echo "2. Forecast"
-          echo "-----------"
-          python weather.py forecast Moscow --days 3
+          # 2. Favorites Demo
+          echo "2. ⭐ Favorites Demo"
+          echo "-------------------"
+          if [ "$FAV_ACTION" = "list" ]; then
+            python weather.py favorites list
+          elif [ "$FAV_ACTION" = "add" ]; then
+            python weather.py favorites add "$FAV_CITY"
+            python weather.py favorites list
+          else
+            python weather.py favorites remove "$FAV_CITY"
+            python weather.py favorites list
+          fi
           echo ""
           
-          echo "3. Favorites"
-          echo "------------"
-          python weather.py favorites list
-          python weather.py favorites add Moscow
-          python weather.py favorites list
-          python weather.py favorites add "${{ github.event.inputs.city }}"
-          python weather.py favorites list
-          echo ""
-          
-          echo "4. Settings"
-          echo "-----------"
+          # 3. Settings Demo
+          echo "3. ⚙️ Settings Demo"
+          echo "------------------"
           python weather.py settings show
+          if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
+            python weather.py settings units "$UNITS"
+            python weather.py settings show
+          fi
         fi
       env:
         PYTHONIOENCODING: utf-8
@@ -229,17 +260,29 @@ jobs:
       run: pip install requests
       shell: bash
     
-    - name: Run Demo
+    - name: Run Demo with User Settings
       run: |
         echo "🌍 WeatherEye Demo Run"
         echo "======================"
         echo "Trigger: ${{ github.event_name }}"
         echo ""
         
-        # ИСПРАВЛЕНИЕ: устанавливаем выбранные единицы измерения
+        # Получаем все настройки пользователя
+        CITY="${{ github.event.inputs.city }}"
+        WEATHER_CMD="${{ github.event.inputs.weather_command }}"
+        DAYS="${{ github.event.inputs.forecast_days }}"
         UNITS="${{ github.event.inputs.units_value }}"
+        
+        echo "📋 Your Settings:"
+        echo "  • City: $CITY"
+        echo "  • Weather command: $WEATHER_CMD"
+        echo "  • Forecast days: $DAYS"
+        echo "  • Units: $UNITS"
+        echo ""
+        
+        # Устанавливаем единицы измерения
         if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
-          echo "Setting units to $UNITS"
+          echo "🔧 Setting units to $UNITS"
           python weather.py settings units "$UNITS"
           echo ""
         fi
@@ -249,24 +292,27 @@ jobs:
         python weather.py settings show
         echo ""
         
-        echo "📌 Moscow"
+        # Выполняем выбранную команду погоды
+        echo "📌 Your Request: $CITY"
+        echo "-------------------"
+        if [ "$WEATHER_CMD" = "now" ]; then
+          python weather.py now "$CITY"
+        else
+          python weather.py forecast "$CITY" --days "$DAYS"
+        fi
+        echo ""
+        
+        # Дополнительные города для демо
+        echo "📌 Additional Cities"
         echo "-------------------"
         python weather.py now Moscow
-        echo ""
-        
-        echo "📌 ${{ github.event.inputs.city || 'Berlin' }}"
-        echo "-------------------"
-        python weather.py now "${{ github.event.inputs.city || 'Berlin' }}"
-        echo ""
-        
-        echo "📌 London"
-        echo "-------------------"
         python weather.py now London
         echo ""
         
-        echo "📅 Forecast"
+        # Прогноз с выбранным количеством дней
+        echo "📅 Forecast ($DAYS days)"
         echo "-------------------"
-        python weather.py forecast Moscow --days 3
+        python weather.py forecast Moscow --days "$DAYS"
       env:
         PYTHONIOENCODING: utf-8
 
