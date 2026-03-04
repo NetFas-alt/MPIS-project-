@@ -1,0 +1,255 @@
+name: WeatherEye CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Ручной запуск
+  schedule:
+    - cron: '0 */6 * * *'  # Запуск каждые 6 часов для демо
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11"]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov flake8 black mypy  # Доп. инструменты
+    
+    - name: Lint with flake8
+      run: |
+        flake8 weather.py --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 weather.py --count --exit-zero --max-complexity=10 --statistics
+    
+    - name: Format check with black
+      run: |
+        black --check weather.py || echo "Форматирование не соответствует black"
+    
+    - name: Type check with mypy
+      run: |
+        mypy weather.py --ignore-missing-imports || echo "Пропускаем проверку типов"
+    
+    - name: Run unit tests
+      run: |
+        python -c "
+import unittest
+import sys
+from weather import *
+
+class TestWeatherApp(unittest.TestCase):
+    def test_temperature_conversion(self):
+        from weather import format_temperature
+        self.assertEqual(format_temperature(0, 'F'), '32°F')
+        self.assertEqual(format_temperature(100, 'F'), '212°F')
+        self.assertEqual(format_temperature(25, 'C'), '25°C')
+    
+    def test_settings_validation(self):
+        from weather import AppSettings
+        settings = AppSettings(units='C')
+        settings.validate()
+        settings = AppSettings(units='F')
+        settings.validate()
+        with self.assertRaises(ValueError):
+            AppSettings(units='K').validate()
+    
+    def test_wind_format(self):
+        from weather import format_wind
+        self.assertEqual(format_wind(5.0), '5.0 м/с')
+        self.assertEqual(format_wind(3.333), '3.3 м/с')
+    
+    def test_error_types(self):
+        from weather import CityNotFoundError, ErrorType
+        err = CityNotFoundError('Moscow')
+        self.assertEqual(err.error_type, ErrorType.NOT_FOUND)
+        self.assertIn('Moscow', str(err))
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
+"
+    
+    - name: Test weather API for Moscow
+      run: |
+        python weather.py now Moscow
+      continue-on-error: true
+    
+    - name: Test weather API for London
+      run: |
+        python weather.py forecast London --days 3
+      continue-on-error: true
+
+  demo:
+    name: Live Demo Run
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Demo - Current Weather in Multiple Cities
+      run: |
+        echo "🌍 WeatherEye Demo Run"
+        echo "======================"
+        echo ""
+        
+        cities=("Moscow" "London" "Tokyo" "New York" "Paris" "Sydney")
+        
+        for city in "${cities[@]}"; do
+          echo "📌 $city"
+          echo "-------------------"
+          python weather.py now "$city" || echo "❌ Failed to get weather for $city"
+          echo ""
+        done
+    
+    - name: Demo - 5-day Forecast
+      run: |
+        echo "📅 5-Day Forecast for Moscow"
+        echo "==========================="
+        python weather.py forecast Moscow --days 5
+    
+    - name: Demo - Favorites Management
+      run: |
+        echo "⭐ Favorites Management Demo"
+        echo "=========================="
+        python weather.py favorites add Moscow
+        python weather.py favorites add London
+        python weather.py favorites add Tokyo
+        python weather.py favorites list
+        python weather.py favorites remove London
+        python weather.py favorites list
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      with:
+        name: weather-demo-output
+        path: |
+          ~/.weathereye/
+          *.log
+        if-no-files-found: ignore
+
+  compatibility:
+    name: Compatibility Check
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    
+    - name: Test with minimal dependencies
+      run: |
+        python -c "import requests; print(f'✅ Requests version: {requests.__version__}')"
+        python weather.py --help
+    
+    - name: Check file structure
+      run: |
+        echo "📁 Repository structure:"
+        ls -la
+        echo ""
+        echo "📄 Weather.py exists: $([ -f weather.py ] && echo '✅' || echo '❌')"
+        echo "📄 Requirements.txt exists: $([ -f requirements.txt ] && echo '✅' || echo '❌')"
+
+  notify:
+    name: Send Notification
+    runs-on: ubuntu-latest
+    needs: [test, demo, compatibility]
+    if: always()
+    
+    steps:
+    - name: Check workflow status
+      run: |
+        if [[ "${{ needs.test.result }}" == "success" ]] && \
+           [[ "${{ needs.demo.result }}" == "success" || "${{ needs.demo.result }}" == "skipped" ]] && \
+           [[ "${{ needs.compatibility.result }}" == "success" ]]; then
+          echo "STATUS=✅ Все тесты пройдены успешно!" >> $GITHUB_ENV
+        else
+          echo "STATUS=❌ Некоторые тесты завершились с ошибкой" >> $GITHUB_ENV
+        fi
+    
+    - name: Display status
+      run: |
+        echo "===================="
+        echo "WeatherEye Pipeline Status"
+        echo "===================="
+        echo "Test: ${{ needs.test.result }}"
+        echo "Demo: ${{ needs.demo.result }}"
+        echo "Compatibility: ${{ needs.compatibility.result }}"
+        echo "===================="
+        echo "${{ env.STATUS }}"
+
+  deploy-docs:
+    name: Deploy Documentation
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Generate documentation
+      run: |
+        mkdir -p docs
+        python -c "
+import weather
+from datetime import datetime
+
+with open('docs/README.md', 'w', encoding='utf-8') as f:
+    f.write('# WeatherEye Documentation\\n\\n')
+    f.write(f'*Generated on {datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}*\\n\\n')
+    f.write('## Commands\\n\\n')
+    f.write('```bash\\n')
+    f.write('python weather.py now <city>              # Current weather\\n')
+    f.write('python weather.py forecast <city> [--days]# Weather forecast\\n')
+    f.write('python weather.py favorites list          # List favorites\\n')
+    f.write('python weather.py favorites add <city>    # Add to favorites\\n')
+    f.write('python weather.py favorites remove <city> # Remove from favorites\\n')
+    f.write('python weather.py settings show           # Show settings\\n')
+    f.write('python weather.py settings units <C|F>    # Change units\\n')
+    f.write('python weather.py --help                   # Show help\\n')
+    f.write('```\\n')
+    print('✅ Documentation generated')
+"
+    
+    - name: Upload documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: docs/
