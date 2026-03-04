@@ -110,7 +110,7 @@ jobs:
         python weather.py favorites list
     
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # <--- ИЗМЕНЕНО С v3 НА v4
       with:
         name: weather-demo-output
         path: |
