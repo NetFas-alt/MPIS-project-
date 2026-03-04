@@ -130,6 +130,8 @@ jobs:
           
           echo "Weather Commands"
           echo "================"
+          echo "City: $CITY"
+          echo ""
           
           if [ "$WEATHER_CMD" = "now" ]; then
             python weather.py now "$CITY"
@@ -171,22 +173,44 @@ jobs:
         elif [ "$COMMAND_GROUP" = "full_demo" ]; then
           echo "Full Demo"
           echo "========="
+          echo ""
           
+          echo "1. Current Weather"
+          echo "------------------"
           python weather.py now Moscow
           python weather.py now London
+          python weather.py now "${{ github.event.inputs.city }}"
+          echo ""
+          
+          echo "2. Forecast"
+          echo "-----------"
           python weather.py forecast Moscow --days 3
+          echo ""
+          
+          echo "3. Favorites"
+          echo "------------"
           python weather.py favorites list
           python weather.py favorites add Moscow
           python weather.py favorites list
+          python weather.py favorites add "${{ github.event.inputs.city }}"
+          python weather.py favorites list
+          echo ""
+          
+          echo "4. Settings"
+          echo "-----------"
           python weather.py settings show
+          python weather.py settings units F
+          python weather.py settings show
+          python weather.py settings units C
         fi
       env:
         PYTHONIOENCODING: utf-8
 
   demo:
-    name: Scheduled Demo
+    name: Demo Run
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    # ИСПРАВЛЕНО: теперь запускается при любом событии
+    if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
     steps:
     - name: Checkout repository
@@ -203,8 +227,28 @@ jobs:
     
     - name: Run Demo
       run: |
+        echo "🌍 WeatherEye Demo Run"
+        echo "======================"
+        echo "Trigger: ${{ github.event_name }}"
+        echo ""
+        
+        echo "📌 Moscow"
+        echo "-------------------"
         python weather.py now Moscow
+        echo ""
+        
+        echo "📌 ${{ github.event.inputs.city || 'Berlin' }}"
+        echo "-------------------"
+        python weather.py now "${{ github.event.inputs.city || 'Berlin' }}"
+        echo ""
+        
+        echo "📌 London"
+        echo "-------------------"
         python weather.py now London
+        echo ""
+        
+        echo "📅 Forecast"
+        echo "-------------------"
         python weather.py forecast Moscow --days 3
       env:
         PYTHONIOENCODING: utf-8
@@ -228,10 +272,12 @@ jobs:
     
     - name: Validate
       run: |
+        echo "🔍 Validating commands..."
         python weather.py --help > /dev/null && echo "✅ Help OK"
         python weather.py now Moscow > /dev/null && echo "✅ Now OK" 
         python weather.py forecast Moscow --days 3 > /dev/null && echo "✅ Forecast OK"
         python weather.py favorites list > /dev/null && echo "✅ Favorites OK"
         python weather.py settings show > /dev/null && echo "✅ Settings OK"
+        echo "✅ All commands validated"
       env:
         PYTHONIOENCODING: utf-8
