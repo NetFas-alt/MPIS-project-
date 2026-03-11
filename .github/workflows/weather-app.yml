@@ -333,66 +333,79 @@ jobs:
           fi
           
         # ---------- FULL DEMO ----------
-        elif [ "$COMMAND_GROUP" = "full_demo" ]; then
-          echo "🎭 FULL DEMONSTRATION"
-          echo "====================="
-          echo ""
-          
-          # 1. WEATHER DEMO
-          echo "1. 🌤️ WEATHER DEMO"
-          echo "------------------"
-          if [ "$WEATHER_CMD" = "now" ]; then
-            python weather.py now "$CITY"
-          else
-            python weather.py forecast "$CITY" --days "$DAYS"
-          fi
-          echo ""
-          
-          # 2. FAVORITES DEMO
-          echo "2. ⭐ FAVORITES DEMO"
-          echo "-------------------"
-          echo "Favorites before:"
-          python weather.py favorites list
-          echo ""
-          
-          if [ "$FAV_ACTION" = "add" ]; then
-            python weather.py favorites add "$FAV_CITY"
-            echo "✅ Favorites after adding '$FAV_CITY':"
-            python weather.py favorites list
-          elif [ "$FAV_ACTION" = "remove" ]; then
-            python weather.py favorites remove "$FAV_CITY"
-            echo "✅ Favorites after removing '$FAV_CITY':"
-            python weather.py favorites list
-          else
-            python weather.py favorites list
-          fi
-          echo ""
-          
-          # 3. SETTINGS DEMO
-          echo "3. ⚙️ SETTINGS DEMO"
-          echo "------------------"
-          python weather.py settings show
-          if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
-            python weather.py settings units "$UNITS"
-            echo ""
-            echo "✅ Settings after change:"
-            python weather.py settings show
-          fi
-          echo ""
-          
-          # 4. FORECAST DEMO
-          echo "4. 📅 FORECAST DEMO ($DAYS days)"
-          echo "--------------------------------"
-          python weather.py forecast Moscow --days "$DAYS"
-          python weather.py forecast "$CITY" --days "$DAYS"
-          echo ""
-          
-          # 5. ADDITIONAL CITIES
-          echo "5. 📋 ADDITIONAL CITIES"
-          echo "----------------------"
-          python weather.py now London
-          python weather.py now Tokyo
-        fi
+elif [ "$COMMAND_GROUP" = "full_demo" ]; then
+  echo "🎭 FULL DEMONSTRATION"
+  echo "====================="
+  echo ""
+  
+  # 1. WEATHER DEMO
+  echo "1. 🌤️ WEATHER DEMO"
+  echo "------------------"
+  if [ "$WEATHER_CMD" = "now" ]; then
+    python weather.py now "$CITY"
+  else
+    python weather.py forecast "$CITY" --days "$DAYS"
+  fi
+  echo ""
+  
+  # 2. FAVORITES DEMO
+  echo "2. ⭐ FAVORITES DEMO"
+  echo "-------------------"
+  echo "Favorites before:"
+  python weather.py favorites list
+  echo ""
+  
+  if [ "$FAV_ACTION" = "add" ]; then
+    python weather.py favorites add "$FAV_CITY"
+    echo "✅ Favorites after adding '$FAV_CITY':"
+    python weather.py favorites list
+  elif [ "$FAV_ACTION" = "remove" ]; then
+    python weather.py favorites remove "$FAV_CITY"
+    echo "✅ Favorites after removing '$FAV_CITY':"
+    python weather.py favorites list
+  else
+    python weather.py favorites list
+  fi
+  echo ""
+  
+  # 3. SETTINGS DEMO
+  echo "3. ⚙️ SETTINGS DEMO"
+  echo "------------------"
+  python weather.py settings show
+  if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
+    python weather.py settings units "$UNITS"
+    echo ""
+    echo "✅ Settings after change:"
+    python weather.py settings show
+  fi
+  echo ""
+  
+  # 4. FORECAST DEMO
+  echo "4. 📅 FORECAST DEMO ($DAYS days)"
+  echo "--------------------------------"
+  python weather.py forecast Moscow --days "$DAYS"
+  python weather.py forecast "$CITY" --days "$DAYS"
+  echo ""
+  
+  # 5. ADDITIONAL CITIES FROM FAVORITES (ИСПРАВЛЕНО)
+  echo "5. 📋 ADDITIONAL CITIES FROM FAVORITES"
+  echo "-------------------------------------"
+  # Получаем список избранных городов
+  FAVORITES_LIST=$(python weather.py favorites list | grep -o "'.*'" | tr -d "'" || echo "")
+  
+  if [ -z "$FAVORITES_LIST" ]; then
+    echo "📭 Нет избранных городов для показа"
+  else
+    echo "Показываем погоду для городов из избранного:"
+    echo "$FAVORITES_LIST" | while read fav_city; do
+      if [ ! -z "$fav_city" ]; then
+        echo ""
+        echo "📌 $fav_city (из избранного)"
+        python weather.py now "$fav_city"
+      fi
+    done
+  fi
+fi
     
     # СОХРАНЯЕМ ИЗБРАННОЕ С ДИАГНОСТИКОЙ
     - name: Save favorites to file
