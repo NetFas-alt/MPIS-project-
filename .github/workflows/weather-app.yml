@@ -31,7 +31,7 @@ on:
         default: 'Moscow'
         type: string
       forecast_days:
-        description: '📅 Дней для прогноза'
+        description: '📅 Дней для прогноза (1-5)'
         required: false
         default: '3'
         type: string
@@ -116,15 +116,14 @@ jobs:
       run: pip install requests
       shell: bash
     
-    # ИСПРАВЛЕНИЕ 1: Создаем директорию ДО загрузки
+    # Создаем директорию для избранного
     - name: Create favorites directory
       run: |
         echo "📁 Creating directory: ~/.weathereye/"
         mkdir -p ~/.weathereye/
-        echo "Directory created:"
-        ls -la ~/ | grep .weathereye || echo "Directory not visible in home"
+        ls -la ~/ | grep .weathereye || echo "Directory created"
     
-    # ИСПРАВЛЕНИЕ 2: Загружаем артефакт с правильным путем
+    # Загружаем сохраненное избранное (если есть)
     - name: Download saved favorites
       uses: actions/download-artifact@v4
       continue-on-error: true
@@ -133,39 +132,18 @@ jobs:
         name: weathereye-favorites
         path: ~/.weathereye/
     
-    # ИСПРАВЛЕНИЕ 3: Проверяем, что загрузилось
-    - name: Check downloaded content
+    # Проверяем и инициализируем избранное
+    - name: Initialize favorites
       run: |
-        echo "📁 Checking downloaded content:"
-        echo "Home directory: $HOME"
-        echo ""
-        
-        echo "Contents of ~/.weathereye/:"
-        ls -la ~/.weathereye/ || echo "Directory is empty or doesn't exist"
-        echo ""
-        
+        echo "📁 Checking favorites:"
         if [ -f ~/.weathereye/favorites.json ]; then
-          echo "✅ favorites.json FOUND!"
-          echo "Content:"
+          echo "✅ Found existing favorites:"
           cat ~/.weathereye/favorites.json
-          echo ""
-          echo "File size: $(wc -c < ~/.weathereye/favorites.json) bytes"
         else
-          echo "❌ favorites.json NOT found"
-          echo "Download step exit code: ${{ steps.download_favorites.outcome }}"
-          echo "Creating empty favorites file..."
+          echo "📭 No favorites found, creating empty file"
           echo '{"cities": []}' > ~/.weathereye/favorites.json
-          echo "✅ Created empty favorites file"
         fi
-    
-    # ИСПРАВЛЕНИЕ 4: Убеждаемся, что файл есть перед выполнением команд
-    - name: Verify favorites file
-      run: |
-        echo "📋 Final verification:"
-        ls -la ~/.weathereye/
         echo ""
-        echo "Content:"
-        cat ~/.weathereye/favorites.json
     
     # Основная логика выполнения команд
     - name: Execute Commands
@@ -177,6 +155,7 @@ jobs:
         
         COMMAND_GROUP="${{ github.event.inputs.command_group }}"
         UNITS="${{ github.event.inputs.units_value }}"
+        DAYS="${{ github.event.inputs.forecast_days }}"
         
         # Устанавливаем единицы измерения, если выбраны
         if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
@@ -194,6 +173,8 @@ jobs:
         echo "⭐ Favorites:"
         python weather.py favorites list
         echo ""
+        echo "📅 Forecast days: $DAYS"
+        echo ""
         
         # Если это push или pull_request без ручного ввода, показываем демо
         if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "schedule" ]; then
@@ -207,9 +188,9 @@ jobs:
           python weather.py now London
           echo ""
           
-          echo "2. 📅 Forecast"
-          echo "-------------"
-          python weather.py forecast Moscow --days 3
+          echo "2. 📅 Forecast ($DAYS days)"
+          echo "------------------------"
+          python weather.py forecast Moscow --days "$DAYS"
           echo ""
           
           echo "3. ⭐ Favorites Demo"
@@ -245,7 +226,6 @@ jobs:
             echo "⭐ Favorites Action: $FAV_ACTION $FAV_CITY"
             echo "========================================="
             
-            # Показываем ДО
             echo "Before:"
             python weather.py favorites list
             echo ""
@@ -330,7 +310,7 @@ jobs:
             fi
             echo ""
             
-            echo "4. 📅 FORECAST DEMO"
+            echo "4. 📅 FORECAST DEMO ($DAYS days)"
             echo "------------------"
             python weather.py forecast Moscow --days "$DAYS"
             echo ""
@@ -344,17 +324,6 @@ jobs:
       env:
         PYTHONIOENCODING: utf-8
     
-    # Показываем что будет сохранено
-    - name: Show content before saving
-      run: |
-        echo "💾 Content to be saved:"
-        if [ -f ~/.weathereye/favorites.json ]; then
-          echo "favorites.json exists:"
-          cat ~/.weathereye/favorites.json
-        else
-          echo "No favorites.json to save"
-        fi
-    
     # Сохраняем избранное для следующего запуска
     - name: Save favorites for next run
       if: always()
@@ -365,14 +334,6 @@ jobs:
         retention-days: 90
         if-no-files-found: ignore
         compression-level: 6
-    
-    # Подтверждение сохранения
-    - name: Confirm artifact upload
-      run: |
-        echo "✅ Artifact upload attempted"
-        echo "Upload step outcome: ${{ job.status }}"
-        echo "Final check:"
-        ls -la ~/.weathereye/ || echo "Directory not found"
 
   validate:
     name: Validate Commands
