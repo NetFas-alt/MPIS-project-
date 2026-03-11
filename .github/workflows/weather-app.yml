@@ -31,7 +31,7 @@ on:
         default: 'Moscow'
         type: string
       forecast_days:
-        description: '📅 Дней для прогноза (1-5)'
+        description: '📅 Дней для прогноза (1-16)'
         required: false
         default: '3'
         type: string
@@ -146,17 +146,51 @@ jobs:
         fi
         echo ""
     
-    # УСТАНАВЛИВАЕМ ПАРАМЕТРЫ В ОКРУЖЕНИЕ
+    # УСТАНАВЛИВАЕМ ПАРАМЕТРЫ В ОКРУЖЕНИЕ С ПРАВИЛЬНОЙ ОБРАБОТКОЙ
     - name: Set parameters
       run: |
-        echo "DAYS=${{ github.event.inputs.forecast_days }}" >> $GITHUB_ENV
-        echo "CITY=${{ github.event.inputs.city }}" >> $GITHUB_ENV
-        echo "UNITS=${{ github.event.inputs.units_value }}" >> $GITHUB_ENV
-        echo "WEATHER_CMD=${{ github.event.inputs.weather_command }}" >> $GITHUB_ENV
-        echo "FAV_ACTION=${{ github.event.inputs.favorites_action }}" >> $GITHUB_ENV
-        echo "FAV_CITY=${{ github.event.inputs.favorites_city }}" >> $GITHUB_ENV
-        echo "COMMAND_GROUP=${{ github.event.inputs.command_group }}" >> $GITHUB_ENV
-        echo "SETTINGS_ACTION=${{ github.event.inputs.settings_action }}" >> $GITHUB_ENV
+        # Получаем значения
+        DAYS_RAW="${{ github.event.inputs.forecast_days }}"
+        CITY="${{ github.event.inputs.city }}"
+        UNITS="${{ github.event.inputs.units_value }}"
+        WEATHER_CMD="${{ github.event.inputs.weather_command }}"
+        FAV_ACTION="${{ github.event.inputs.favorites_action }}"
+        FAV_CITY="${{ github.event.inputs.favorites_city }}"
+        COMMAND_GROUP="${{ github.event.inputs.command_group }}"
+        SETTINGS_ACTION="${{ github.event.inputs.settings_action }}"
+        
+        # ИСПРАВЛЕНИЕ: Правильная обработка дней
+        # Убираем кавычки и пробелы
+        DAYS_RAW=$(echo "$DAYS_RAW" | tr -d '"' | xargs)
+        
+        # Проверяем, что это число
+        if [[ "$DAYS_RAW" =~ ^[0-9]+$ ]]; then
+            DAYS=$DAYS_RAW
+        else
+            DAYS=3
+            echo "⚠️ Некорректное значение дней '$DAYS_RAW', используется 3"
+        fi
+        
+        # Ограничиваем разумными значениями
+        if [ "$DAYS" -lt 1 ]; then
+            DAYS=1
+            echo "⚠️ Минимальное количество дней - 1"
+        elif [ "$DAYS" -gt 16 ]; then
+            DAYS=16
+            echo "⚠️ Максимальное количество дней - 16"
+        fi
+        
+        # Сохраняем в окружение
+        echo "DAYS=$DAYS" >> $GITHUB_ENV
+        echo "CITY=$CITY" >> $GITHUB_ENV
+        echo "UNITS=$UNITS" >> $GITHUB_ENV
+        echo "WEATHER_CMD=$WEATHER_CMD" >> $GITHUB_ENV
+        echo "FAV_ACTION=$FAV_ACTION" >> $GITHUB_ENV
+        echo "FAV_CITY=$FAV_CITY" >> $GITHUB_ENV
+        echo "COMMAND_GROUP=$COMMAND_GROUP" >> $GITHUB_ENV
+        echo "SETTINGS_ACTION=$SETTINGS_ACTION" >> $GITHUB_ENV
+        
+        echo "✅ Параметры установлены: DAYS=$DAYS"
     
     # УСТАНАВЛИВАЕМ ЕДИНИЦЫ ИЗМЕРЕНИЯ
     - name: Set units
@@ -272,12 +306,12 @@ jobs:
           elif [ "$FAV_ACTION" = "add" ]; then
             python weather.py favorites add "$FAV_CITY"
             echo ""
-            echo "✅ Favorites after adding $FAV_CITY:"
+            echo "✅ Favorites after adding '$FAV_CITY':"
             python weather.py favorites list
           elif [ "$FAV_ACTION" = "remove" ]; then
             python weather.py favorites remove "$FAV_CITY"
             echo ""
-            echo "✅ Favorites after removing $FAV_CITY:"
+            echo "✅ Favorites after removing '$FAV_CITY':"
             python weather.py favorites list
           fi
           
@@ -323,11 +357,11 @@ jobs:
           
           if [ "$FAV_ACTION" = "add" ]; then
             python weather.py favorites add "$FAV_CITY"
-            echo "✅ Favorites after adding $FAV_CITY:"
+            echo "✅ Favorites after adding '$FAV_CITY':"
             python weather.py favorites list
           elif [ "$FAV_ACTION" = "remove" ]; then
             python weather.py favorites remove "$FAV_CITY"
-            echo "✅ Favorites after removing $FAV_CITY:"
+            echo "✅ Favorites after removing '$FAV_CITY':"
             python weather.py favorites list
           else
             python weather.py favorites list
@@ -360,18 +394,23 @@ jobs:
           python weather.py now Tokyo
         fi
     
-    # СОХРАНЯЕМ ИЗБРАННОЕ
+    # СОХРАНЯЕМ ИЗБРАННОЕ С ДИАГНОСТИКОЙ
     - name: Save favorites to file
       run: |
         echo ""
         echo "💾 Saving favorites for next run..."
-        echo "Current favorites:"
+        echo "Current favorites list:"
         python weather.py favorites list
         echo ""
-        echo "File content:"
+        echo "File content before save:"
         cat ~/.weathereye/favorites.json
         echo ""
+        # Принудительно сохраняем через команду list (она читает файл)
+        # и через add (она записывает файл) - для гарантии
+        python weather.py favorites list > /dev/null
         echo "✅ Favorites saved"
+        echo "File content after:"
+        cat ~/.weathereye/favorites.json
     
     - name: Upload favorites artifact
       if: always()
