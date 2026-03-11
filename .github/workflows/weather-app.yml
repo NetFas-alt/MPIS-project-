@@ -116,18 +116,15 @@ jobs:
       run: pip install requests
       shell: bash
     
-    # ДИАГНОСТИКА: показываем все артефакты перед загрузкой
-    - name: List available artifacts
+    # ИСПРАВЛЕНИЕ 1: Создаем директорию ДО загрузки
+    - name: Create favorites directory
       run: |
-        echo "🔍 Checking for existing artifacts..."
-        # GitHub не дает прямого API в шагах, но мы можем проверить через curl
-        curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-             -H "Accept: application/vnd.github.v3+json" \
-             https://api.github.com/repos/${{ github.repository }}/actions/artifacts \
-             | jq '.artifacts[] | {name: .name, id: .id, size: .size_in_bytes, created: .created_at}' 2>/dev/null || echo "No artifacts found or jq not available"
-      continue-on-error: true
+        echo "📁 Creating directory: ~/.weathereye/"
+        mkdir -p ~/.weathereye/
+        echo "Directory created:"
+        ls -la ~/ | grep .weathereye || echo "Directory not visible in home"
     
-    # Загружаем сохраненное избранное (если есть)
+    # ИСПРАВЛЕНИЕ 2: Загружаем артефакт с правильным путем
     - name: Download saved favorites
       uses: actions/download-artifact@v4
       continue-on-error: true
@@ -136,20 +133,19 @@ jobs:
         name: weathereye-favorites
         path: ~/.weathereye/
     
-    # ДИАГНОСТИКА: проверяем, что загрузилось
+    # ИСПРАВЛЕНИЕ 3: Проверяем, что загрузилось
     - name: Check downloaded content
       run: |
         echo "📁 Checking downloaded content:"
-        echo "Current directory: $(pwd)"
         echo "Home directory: $HOME"
         echo ""
         
         echo "Contents of ~/.weathereye/:"
-        ls -la ~/.weathereye/ 2>/dev/null || echo "Directory does not exist"
+        ls -la ~/.weathereye/ || echo "Directory is empty or doesn't exist"
         echo ""
         
         if [ -f ~/.weathereye/favorites.json ]; then
-          echo "✅ favorites.json exists"
+          echo "✅ favorites.json FOUND!"
           echo "Content:"
           cat ~/.weathereye/favorites.json
           echo ""
@@ -157,21 +153,18 @@ jobs:
         else
           echo "❌ favorites.json NOT found"
           echo "Download step exit code: ${{ steps.download_favorites.outcome }}"
+          echo "Creating empty favorites file..."
+          echo '{"cities": []}' > ~/.weathereye/favorites.json
+          echo "✅ Created empty favorites file"
         fi
     
-    # Инициализируем файл с избранным, если его нет
-    - name: Initialize favorites if needed
+    # ИСПРАВЛЕНИЕ 4: Убеждаемся, что файл есть перед выполнением команд
+    - name: Verify favorites file
       run: |
-        if [ ! -f ~/.weathereye/favorites.json ]; then
-          echo "📭 No favorites file found - creating empty one"
-          mkdir -p ~/.weathereye
-          echo '{"cities": []}' > ~/.weathereye/favorites.json
-          echo "Created empty favorites file"
-        else
-          echo "✅ Using existing favorites file"
-        fi
+        echo "📋 Final verification:"
+        ls -la ~/.weathereye/
         echo ""
-        echo "Final favorites content:"
+        echo "Content:"
         cat ~/.weathereye/favorites.json
     
     # Основная логика выполнения команд
@@ -351,7 +344,7 @@ jobs:
       env:
         PYTHONIOENCODING: utf-8
     
-    # ДИАГНОСТИКА: показываем что будет сохранено
+    # Показываем что будет сохранено
     - name: Show content before saving
       run: |
         echo "💾 Content to be saved:"
@@ -373,11 +366,13 @@ jobs:
         if-no-files-found: ignore
         compression-level: 6
     
-    # ДИАГНОСТИКА: подтверждение сохранения
+    # Подтверждение сохранения
     - name: Confirm artifact upload
       run: |
         echo "✅ Artifact upload attempted"
         echo "Upload step outcome: ${{ job.status }}"
+        echo "Final check:"
+        ls -la ~/.weathereye/ || echo "Directory not found"
 
   validate:
     name: Validate Commands
