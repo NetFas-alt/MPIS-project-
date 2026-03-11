@@ -106,13 +106,6 @@ class AppSettings:
             raise ValueError("Units must be 'C' or 'F'")
 
 
-@dataclass
-class FavoriteLocation:
-    """Избранный город (для хранения)"""
-    name: str
-    country: str = ""
-
-
 # ==================== ОШИБКИ ====================
 
 class ErrorType(Enum):
@@ -365,7 +358,9 @@ class GeoProvider:
                     "Sofia": "Bulgaria",
                     "София": "Bulgaria",
                     "Belgrade": "Serbia",
-                    "Белград": "Serbia"
+                    "Белград": "Serbia",
+                    "Washington": "USA",
+                    "Вашингтон": "USA"
                 }
                 
                 # Проверяем, есть ли город в словаре известных
@@ -463,11 +458,26 @@ class WeatherProvider:
         except Exception as e:
             raise NetworkError(e)
     
+    # ========== ИСПРАВЛЕНИЕ 1: Правильная обработка days ==========
     def get_forecast(self, location: Location, days: int = 3) -> List[DailyForecast]:
         """Получение прогноза на N дней"""
-        if days < 1 or days > 7:
+        # Преобразуем в int и проверяем
+        try:
+            days = int(days)
+        except (ValueError, TypeError):
             days = 3
-            
+            print(f"⚠️ Некорректное значение дней, используется {days}")
+        
+        # Ограничиваем разумными значениями (API поддерживает до 16)
+        if days < 1:
+            days = 1
+            print("⚠️ Минимальное количество дней - 1")
+        elif days > 16:
+            days = 16
+            print("⚠️ Максимальное количество дней - 16")
+        
+        print(f"📅 Запрос прогноза на {days} дней для {location.name}")
+        
         try:
             params = {
                 "latitude": location.latitude,
@@ -495,7 +505,11 @@ class WeatherProvider:
             min_temps = daily.get("temperature_2m_min", [])
             weather_codes = daily.get("weather_code", [])
             
-            for i in range(min(len(dates), days)):
+            # Берем минимум из запрошенных дней и того, что вернуло API
+            available_days = min(len(dates), days)
+            print(f"✅ Получено данных на {available_days} дней")
+            
+            for i in range(available_days):
                 date = datetime.fromisoformat(dates[i])
                 weather_code = weather_codes[i] if i < len(weather_codes) else 0
                 
@@ -582,18 +596,38 @@ class Storage:
                 return dto.cities
                 
         except json.JSONDecodeError as e:
-            raise StorageError("Failed to parse favorites file", e)
+            print(f"⚠️ Error loading favorites: {e}")
+            return []
         except Exception as e:
-            raise StorageError("Failed to load favorites", e)
+            print(f"⚠️ Error loading favorites: {e}")
+            return []
     
+    # ========== ИСПРАВЛЕНИЕ 2: Улучшенное сохранение избранного ==========
     def save_favorites(self, cities: List[str]):
         """Сохранение списка избранных городов"""
         try:
-            dto = FavoritesFileDTO(cities=cities)
+            # Убираем дубликаты и пустые строки
+            clean_cities = []
+            for city in cities:
+                if city and city.strip():
+                    clean_cities.append(city.strip())
+            
+            # Убираем дубликаты сохраняя порядок (сравнение без учета регистра)
+            seen = set()
+            unique_cities = []
+            for city in clean_cities:
+                city_lower = city.lower()
+                if city_lower not in seen:
+                    seen.add(city_lower)
+                    unique_cities.append(city)
+            
+            dto = FavoritesFileDTO(cities=unique_cities)
             with open(self.favorites_file, 'w', encoding='utf-8') as f:
                 json.dump(dto.to_dict(), f, ensure_ascii=False, indent=2)
+            print(f"✅ Saved {len(unique_cities)} favorites: {unique_cities}")
+                
         except Exception as e:
-            raise StorageError("Failed to save favorites", e)
+            print(f"⚠️ Error saving favorites: {e}")
     
     def load_settings(self) -> AppSettings:
         """Загрузка настроек"""
@@ -609,9 +643,11 @@ class Storage:
                 return settings
                 
         except json.JSONDecodeError as e:
-            raise StorageError("Failed to parse settings file", e)
+            print(f"⚠️ Error loading settings: {e}")
+            return AppSettings()
         except Exception as e:
-            raise StorageError("Failed to load settings", e)
+            print(f"⚠️ Error loading settings: {e}")
+            return AppSettings()
     
     def save_settings(self, settings: AppSettings):
         """Сохранение настроек"""
@@ -621,7 +657,7 @@ class Storage:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(dto.to_dict(), f, ensure_ascii=False, indent=2)
         except Exception as e:
-            raise StorageError("Failed to save settings", e)
+            print(f"⚠️ Error saving settings: {e}")
 
 
 # ==================== СЦЕНАРИИ ИСПОЛЬЗОВАНИЯ ====================
@@ -634,7 +670,8 @@ class WeatherUseCase:
         self.weather_provider = WeatherProvider()
         self.cache = Cache()
     
-    def execute(self, city: str, units: str = "C") -> Tuple[CurrentWeather, List[DailyForecast]]:
+    # ========== ИСПРАВЛЕНИЕ 3: Добавляем параметр forecast_days ==========
+    def execute(self, city: str, units: str = "C", forecast_days: int = 3) -> Tuple[CurrentWeather, List[DailyForecast]]:
         """
         Выполнение сценария: поиск города и получение погоды
         Возвращает (текущая_погода, прогноз)
@@ -646,6 +683,7 @@ class WeatherUseCase:
         cache_key = f"{city.strip().lower()}"
         cached = self.cache.get(cache_key)
         if cached:
+            print("📦 Использованы данные из кэша")
             return cached
         
         # Поиск города
@@ -658,7 +696,7 @@ class WeatherUseCase:
         
         # Получаем погоду
         current = self.weather_provider.get_current(location)
-        forecast = self.weather_provider.get_forecast(location, 3)
+        forecast = self.weather_provider.get_forecast(location, forecast_days)
         
         result = (current, forecast)
         
@@ -678,6 +716,7 @@ class FavoritesUseCase:
         """Получить список избранных городов"""
         return self.storage.load_favorites()
     
+    # ========== ИСПРАВЛЕНИЕ 4: Улучшенное добавление (без дубликатов) ==========
     def add_favorite(self, city: str) -> List[str]:
         """Добавить город в избранное"""
         if not city or not city.strip():
@@ -686,12 +725,24 @@ class FavoritesUseCase:
         favorites = self.storage.load_favorites()
         city_clean = city.strip()
         
-        if city_clean not in favorites:
+        # Проверяем по нижнему регистру
+        city_lower = city_clean.lower()
+        exists = False
+        for existing in favorites:
+            if existing.lower() == city_lower:
+                exists = True
+                break
+        
+        if not exists:
             favorites.append(city_clean)
             self.storage.save_favorites(favorites)
+            print(f"✅ Added '{city_clean}' to favorites")
+        else:
+            print(f"ℹ️ '{city_clean}' already in favorites")
         
         return favorites
     
+    # ========== ИСПРАВЛЕНИЕ 5: Улучшенное удаление (по нижнему регистру) ==========
     def remove_favorite(self, city: str) -> List[str]:
         """Удалить город из избранного"""
         if not city or not city.strip():
@@ -699,12 +750,24 @@ class FavoritesUseCase:
         
         favorites = self.storage.load_favorites()
         city_clean = city.strip()
+        city_lower = city_clean.lower()
         
-        if city_clean in favorites:
-            favorites.remove(city_clean)
-            self.storage.save_favorites(favorites)
+        # Удаляем по нижнему регистру
+        new_favorites = []
+        removed = False
+        for existing in favorites:
+            if existing.lower() != city_lower:
+                new_favorites.append(existing)
+            else:
+                removed = True
         
-        return favorites
+        if removed:
+            self.storage.save_favorites(new_favorites)
+            print(f"✅ Removed '{city_clean}' from favorites")
+        else:
+            print(f"ℹ️ '{city_clean}' not in favorites")
+        
+        return new_favorites
 
 
 class SettingsUseCase:
@@ -823,7 +886,7 @@ class WeatherApp:
         # Команда: forecast
         forecast_parser = subparsers.add_parser("forecast", help="прогноз погоды")
         forecast_parser.add_argument("city", help="название города")
-        forecast_parser.add_argument("--days", type=int, default=3, help="количество дней (1-5)")
+        forecast_parser.add_argument("--days", type=int, default=3, help="количество дней (1-16)")
         forecast_parser.set_defaults(func=self._cmd_forecast)
         
         # Команды для избранного
@@ -863,40 +926,64 @@ class WeatherApp:
         print()
         print(format_current_weather(current, self.settings.units))
     
+    # ========== ИСПРАВЛЕНИЕ 6: Правильная обработка дней в команде ==========
     def _cmd_forecast(self, args):
         """Обработка команды forecast"""
-        if args.days < 1 or args.days > 5:
-            print("❌ Количество дней должно быть от 1 до 5")
-            return
+        # Преобразуем в int
+        try:
+            days = int(args.days)
+        except (ValueError, TypeError):
+            days = 3
+            print(f"⚠️ Некорректное значение, используется {days} дней")
         
-        print(f"🔍 Загрузка прогноза для {args.city} на {args.days} дней...")
+        # Ограничиваем
+        if days < 1:
+            days = 1
+            print("⚠️ Минимальное количество дней - 1")
+        elif days > 16:
+            days = 16
+            print("⚠️ Максимальное количество дней - 16")
         
-        _, forecast = self.weather_use_case.execute(args.city, self.settings.units)
+        print(f"🔍 Загрузка прогноза для {args.city} на {days} дней...")
+        
+        # Передаем days в execute
+        _, forecast = self.weather_use_case.execute(args.city, self.settings.units, days)
         
         print()
-        print(format_forecast(forecast[:args.days], self.settings.units))
+        print(format_forecast(forecast[:days], self.settings.units))
+        print(f"✅ Показано {len(forecast[:days])} дней из {days} запрошенных")
     
+    # ========== ИСПРАВЛЕНИЕ 7: Улучшенный вывод избранного ==========
     def _cmd_fav_list(self, args):
         """Показать список избранных городов"""
         favorites = self.favorites_use_case.list_favorites()
         
+        print(f"📋 Список избранных городов ({len(favorites)}):")
         if not favorites:
-            print("📭 Список избранных городов пуст")
-            return
+            print("  (пусто)")
+        else:
+            for i, city in enumerate(favorites, 1):
+                print(f"  {i}. '{city}'")
         
-        print("📋 Список избранных городов:")
-        for i, city in enumerate(favorites, 1):
-            print(f"  {i}. {city}")
+        # Диагностика
+        fav_file = Settings.FAVORITES_FILE
+        if fav_file.exists():
+            try:
+                with open(fav_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    print(f"📁 Файл: {data}")
+            except:
+                pass
     
     def _cmd_fav_add(self, args):
         """Добавить город в избранное"""
         favorites = self.favorites_use_case.add_favorite(args.city)
-        print(f"✅ Город '{args.city}' добавлен в избранное")
+        print(f"✅ Текущий список: {favorites}")
     
     def _cmd_fav_remove(self, args):
         """Удалить город из избранного"""
         favorites = self.favorites_use_case.remove_favorite(args.city)
-        print(f"🗑️ Город '{args.city}' удален из избранного")
+        print(f"✅ Текущий список: {favorites}")
     
     def _cmd_settings_show(self, args):
         """Показать текущие настройки"""
@@ -905,7 +992,7 @@ class WeatherApp:
         
         print("⚙️ Текущие настройки:")
         print(f"  • Единицы измерения: {units_display}")
-        print(f"  • Директория данных: {self.settings_use_case.storage.favorites_file.parent}")
+        print(f"  • Директория данных: {Settings.APP_DATA_DIR}")
     
     def _cmd_settings_units(self, args):
         """Установить единицы измерения"""
