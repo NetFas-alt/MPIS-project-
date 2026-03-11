@@ -10,7 +10,7 @@ on:
       command_group:
         description: '📋 Группа команд'
         required: true
-        default: 'weather'
+        default: 'full_demo'
         type: choice
         options:
           - weather
@@ -121,34 +121,33 @@ jobs:
       run: |
         echo "📁 Creating directory: ~/.weathereye/"
         mkdir -p ~/.weathereye/
-        ls -la ~/ | grep .weathereye || echo "Directory created"
+        echo "✅ Directory created"
     
     # ЗАГРУЖАЕМ СОХРАНЕННОЕ ИЗБРАННОЕ
     - name: Download saved favorites
       uses: actions/download-artifact@v4
       continue-on-error: true
-      id: download_favorites
       with:
         name: weathereye-favorites
         path: ~/.weathereye/
     
-    # ПРОВЕРЯЕМ И ИНИЦИАЛИЗИРУЕМ ИЗБРАННОЕ
-    - name: Check and initialize favorites
+    # ИНИЦИАЛИЗИРУЕМ ИЗБРАННОЕ
+    - name: Initialize favorites
       run: |
-        echo "📁 Checking favorites:"
+        echo "📁 Checking favorites file..."
         if [ -f ~/.weathereye/favorites.json ]; then
           echo "✅ Found existing favorites file"
           echo "Content:"
           cat ~/.weathereye/favorites.json
         else
-          echo "📭 No favorites found, creating empty file"
+          echo "📭 No favorites file found, creating empty one"
           echo '{"cities": []}' > ~/.weathereye/favorites.json
+          echo "✅ Created empty favorites file"
         fi
         echo ""
     
-    # ПОЛУЧАЕМ ВСЕ ПАРАМЕТРЫ
+    # УСТАНАВЛИВАЕМ ПАРАМЕТРЫ В ОКРУЖЕНИЕ
     - name: Set parameters
-      id: params
       run: |
         echo "DAYS=${{ github.event.inputs.forecast_days }}" >> $GITHUB_ENV
         echo "CITY=${{ github.event.inputs.city }}" >> $GITHUB_ENV
@@ -156,6 +155,8 @@ jobs:
         echo "WEATHER_CMD=${{ github.event.inputs.weather_command }}" >> $GITHUB_ENV
         echo "FAV_ACTION=${{ github.event.inputs.favorites_action }}" >> $GITHUB_ENV
         echo "FAV_CITY=${{ github.event.inputs.favorites_city }}" >> $GITHUB_ENV
+        echo "COMMAND_GROUP=${{ github.event.inputs.command_group }}" >> $GITHUB_ENV
+        echo "SETTINGS_ACTION=${{ github.event.inputs.settings_action }}" >> $GITHUB_ENV
     
     # УСТАНАВЛИВАЕМ ЕДИНИЦЫ ИЗМЕРЕНИЯ
     - name: Set units
@@ -163,62 +164,90 @@ jobs:
         if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
           echo "🔧 Setting units to $UNITS"
           python weather.py settings units "$UNITS"
+          echo "✅ Units set to $UNITS"
+        else
+          echo "✅ Using default units (Celsius)"
         fi
     
     # ПОКАЗЫВАЕМ ТЕКУЩЕЕ СОСТОЯНИЕ
     - name: Show current state
       run: |
-        echo "📊 Current State:"
-        echo "-----------------"
-        echo "⚙️ Settings:"
+        echo "╔════════════════════════════════════╗"
+        echo "║        CURRENT STATE               ║"
+        echo "╚════════════════════════════════════╝"
+        echo ""
+        echo "📊 Workflow Information:"
+        echo "  • Event: ${{ github.event_name }}"
+        echo "  • Command group: $COMMAND_GROUP"
+        echo "  • Weather command: $WEATHER_CMD"
+        echo "  • City: $CITY"
+        echo "  • Forecast days: $DAYS"
+        echo "  • Units: $UNITS"
+        echo "  • Favorites action: $FAV_ACTION"
+        echo "  • Favorites city: $FAV_CITY"
+        echo "  • Settings action: $SETTINGS_ACTION"
+        echo ""
+        echo "⚙️ Current settings:"
         python weather.py settings show
         echo ""
-        echo "⭐ Favorites:"
+        echo "⭐ Current favorites:"
         python weather.py favorites list
-        echo ""
-        echo "📅 Forecast days: $DAYS"
-        echo ""
     
-    # АВТО-ДЕМО РЕЖИМ (ДЛЯ PUSH/SCHEDULE)
+    # ========== РЕЖИМ 1: AUTO DEMO (ДЛЯ PUSH/SCHEDULE) ==========
     - name: Auto Demo Mode
       if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'schedule'
       run: |
-        echo "🎭 AUTO DEMO MODE"
-        echo "================="
+        echo ""
+        echo "╔════════════════════════════════════╗"
+        echo "║        AUTO DEMO MODE               ║"
+        echo "╚════════════════════════════════════╝"
         echo ""
         
-        echo "1. 🌤️ Current Weather"
-        echo "------------------"
+        echo "📅 Using forecast days: $DAYS"
+        echo ""
+        
+        echo "1. 🌤️ CURRENT WEATHER"
+        echo "----------------------"
         python weather.py now Moscow
         python weather.py now London
         echo ""
         
-        echo "2. 📅 Forecast ($DAYS days)"
-        echo "------------------------"
+        echo "2. 📅 FORECAST ($DAYS days)"
+        echo "---------------------------"
         python weather.py forecast Moscow --days "$DAYS"
         python weather.py forecast London --days "$DAYS"
         echo ""
         
-        echo "3. ⭐ Favorites Demo"
-        echo "-------------------"
-        echo "Current favorites:"
+        echo "3. ⭐ FAVORITES DEMO"
+        echo "--------------------"
+        echo "Favorites before:"
         python weather.py favorites list
         echo ""
         echo "Adding Moscow to favorites..."
         python weather.py favorites add Moscow
-        echo "Updated favorites:"
+        echo "Favorites after:"
         python weather.py favorites list
     
-    # РУЧНОЙ РЕЖИМ (ДЛЯ WORKFLOW_DISPATCH)
-    - name: Manual Mode - ${{ github.event.inputs.command_group }}
+    # ========== РЕЖИМ 2: РУЧНОЙ ЗАПУСК (ДЛЯ WORKFLOW_DISPATCH) ==========
+    - name: Manual Mode
       if: github.event_name == 'workflow_dispatch'
       run: |
-        echo "🎯 MANUAL MODE - $COMMAND_GROUP"
-        echo "==============================="
+        echo ""
+        echo "╔════════════════════════════════════╗"
+        echo "║        MANUAL MODE                  ║"
+        echo "╚════════════════════════════════════╝"
+        echo ""
         
+        echo "📅 Using forecast days: $DAYS"
+        echo ""
+        
+        # ---------- WEATHER ----------
         if [ "$COMMAND_GROUP" = "weather" ]; then
-          echo "🌤️ Weather Command: $WEATHER_CMD for $CITY"
-          echo "========================================="
+          echo "🌤️ WEATHER COMMAND"
+          echo "=================="
+          echo "Command: $WEATHER_CMD"
+          echo "City: $CITY"
+          echo ""
           
           if [ "$WEATHER_CMD" = "now" ]; then
             python weather.py now "$CITY"
@@ -226,11 +255,15 @@ jobs:
             python weather.py forecast "$CITY" --days "$DAYS"
           fi
           
+        # ---------- FAVORITES ----------
         elif [ "$COMMAND_GROUP" = "favorites" ]; then
-          echo "⭐ Favorites Action: $FAV_ACTION $FAV_CITY"
-          echo "========================================="
+          echo "⭐ FAVORITES COMMAND"
+          echo "===================="
+          echo "Action: $FAV_ACTION"
+          echo "City: $FAV_CITY"
+          echo ""
           
-          echo "Before:"
+          echo "Favorites before:"
           python weather.py favorites list
           echo ""
           
@@ -239,33 +272,39 @@ jobs:
           elif [ "$FAV_ACTION" = "add" ]; then
             python weather.py favorites add "$FAV_CITY"
             echo ""
-            echo "✅ After adding $FAV_CITY:"
+            echo "✅ Favorites after adding $FAV_CITY:"
             python weather.py favorites list
-          else
+          elif [ "$FAV_ACTION" = "remove" ]; then
             python weather.py favorites remove "$FAV_CITY"
             echo ""
-            echo "✅ After removing $FAV_CITY:"
+            echo "✅ Favorites after removing $FAV_CITY:"
             python weather.py favorites list
           fi
           
+        # ---------- SETTINGS ----------
         elif [ "$COMMAND_GROUP" = "settings" ]; then
-          echo "⚙️ Settings Action: $SETTINGS_ACTION"
-          echo "====================================="
+          echo "⚙️ SETTINGS COMMAND"
+          echo "==================="
+          echo "Action: $SETTINGS_ACTION"
+          echo ""
           
           if [ "$SETTINGS_ACTION" = "show" ]; then
             python weather.py settings show
           else
+            echo "Changing units to $UNITS..."
             python weather.py settings units "$UNITS"
             echo ""
-            echo "✅ Updated settings:"
+            echo "✅ Settings after change:"
             python weather.py settings show
           fi
           
+        # ---------- FULL DEMO ----------
         elif [ "$COMMAND_GROUP" = "full_demo" ]; then
           echo "🎭 FULL DEMONSTRATION"
           echo "====================="
           echo ""
           
+          # 1. WEATHER DEMO
           echo "1. 🌤️ WEATHER DEMO"
           echo "------------------"
           if [ "$WEATHER_CMD" = "now" ]; then
@@ -275,58 +314,64 @@ jobs:
           fi
           echo ""
           
+          # 2. FAVORITES DEMO
           echo "2. ⭐ FAVORITES DEMO"
           echo "-------------------"
-          echo "Current favorites:"
+          echo "Favorites before:"
           python weather.py favorites list
           echo ""
           
-          if [ "$FAV_ACTION" = "list" ]; then
-            python weather.py favorites list
-          elif [ "$FAV_ACTION" = "add" ]; then
+          if [ "$FAV_ACTION" = "add" ]; then
             python weather.py favorites add "$FAV_CITY"
-            echo "Updated favorites:"
+            echo "✅ Favorites after adding $FAV_CITY:"
+            python weather.py favorites list
+          elif [ "$FAV_ACTION" = "remove" ]; then
+            python weather.py favorites remove "$FAV_CITY"
+            echo "✅ Favorites after removing $FAV_CITY:"
             python weather.py favorites list
           else
-            python weather.py favorites remove "$FAV_CITY"
-            echo "Updated favorites:"
             python weather.py favorites list
           fi
           echo ""
           
+          # 3. SETTINGS DEMO
           echo "3. ⚙️ SETTINGS DEMO"
           echo "------------------"
           python weather.py settings show
           if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
             python weather.py settings units "$UNITS"
-            echo "Updated settings:"
+            echo ""
+            echo "✅ Settings after change:"
             python weather.py settings show
           fi
           echo ""
           
+          # 4. FORECAST DEMO
           echo "4. 📅 FORECAST DEMO ($DAYS days)"
-          echo "------------------"
+          echo "--------------------------------"
           python weather.py forecast Moscow --days "$DAYS"
           python weather.py forecast "$CITY" --days "$DAYS"
+          echo ""
+          
+          # 5. ADDITIONAL CITIES
+          echo "5. 📋 ADDITIONAL CITIES"
+          echo "----------------------"
+          python weather.py now London
+          python weather.py now Tokyo
         fi
-      env:
-        COMMAND_GROUP: ${{ github.event.inputs.command_group }}
-        WEATHER_CMD: ${{ github.event.inputs.weather_command }}
-        CITY: ${{ github.event.inputs.city }}
-        DAYS: ${{ github.event.inputs.forecast_days }}
-        FAV_ACTION: ${{ github.event.inputs.favorites_action }}
-        FAV_CITY: ${{ github.event.inputs.favorites_city }}
-        SETTINGS_ACTION: ${{ github.event.inputs.settings_action }}
-        UNITS: ${{ github.event.inputs.units_value }}
     
     # СОХРАНЯЕМ ИЗБРАННОЕ
-    - name: Save favorites before upload
+    - name: Save favorites to file
       run: |
-        echo "💾 Current favorites before save:"
+        echo ""
+        echo "💾 Saving favorites for next run..."
+        echo "Current favorites:"
         python weather.py favorites list
         echo ""
         echo "File content:"
-        cat ~/.weathereye/favorites.json || echo "No file"
+        cat ~/.weathereye/favorites.json
+        echo ""
+        echo "✅ Favorites saved"
     
     - name: Upload favorites artifact
       if: always()
@@ -336,13 +381,16 @@ jobs:
         path: ~/.weathereye/
         retention-days: 90
         if-no-files-found: ignore
-        compression-level: 6
     
-    - name: Verify upload
+    - name: Final status
+      if: always()
       run: |
-        echo "✅ Artifact upload completed"
-        echo "Final favorites content:"
-        cat ~/.weathereye/favorites.json || echo "No file"
+        echo ""
+        echo "╔════════════════════════════════════╗"
+        echo "║        EXECUTION COMPLETE           ║"
+        echo "╚════════════════════════════════════╝"
+        echo "Event: ${{ github.event_name }}"
+        echo "Status: ${{ job.status }}"
 
   validate:
     name: Validate Commands
@@ -368,6 +416,4 @@ jobs:
         python weather.py --help > /dev/null && echo "✅ Help OK"
         python weather.py now Moscow > /dev/null && echo "✅ Now OK" 
         python weather.py forecast Moscow --days 3 > /dev/null && echo "✅ Forecast OK"
-        echo "✅ Validation complete"
-      env:
-        PYTHONIOENCODING: utf-8
+        echo "✅ All commands validated"
