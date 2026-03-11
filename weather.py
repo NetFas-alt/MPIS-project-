@@ -106,6 +106,13 @@ class AppSettings:
             raise ValueError("Units must be 'C' or 'F'")
 
 
+@dataclass
+class FavoriteLocation:
+    """Избранный город (для хранения)"""
+    name: str
+    country: str = ""
+
+
 # ==================== ОШИБКИ ====================
 
 class ErrorType(Enum):
@@ -278,6 +285,32 @@ class GeoProvider:
         self.base_url = Settings.GEO_API_URL
         self.timeout = Settings.NETWORK_TIMEOUT_SECONDS
     
+    def _get_country_from_coords(self, lat: float, lon: float) -> str:
+        """Определение страны по координатам через обратное геокодирование"""
+        try:
+            # Используем бесплатный Nominatim API (OpenStreetMap)
+            url = "https://nominatim.openstreetmap.org/reverse"
+            params = {
+                "lat": lat,
+                "lon": lon,
+                "format": "json",
+                "zoom": 3  # Уровень для получения страны
+            }
+            headers = {
+                "User-Agent": "WeatherEye/1.0"
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                address = data.get("address", {})
+                country = address.get("country", "")
+                if country:
+                    return country
+        except:
+            pass
+        return ""
+    
     def search(self, query: str) -> List[Location]:
         """
         Поиск города по названию
@@ -306,9 +339,56 @@ class GeoProvider:
             
             locations = []
             for result in dto.results:
+                country = result.get("country", "")
+                city_name = result.get("name", "")
+                
+                # Словарь известных городов и их правильных стран
+                known_cities = {
+                    "Warsaw": "Poland",
+                    "Варшава": "Poland",
+                    "Warszawa": "Poland",
+                    "Prague": "Czech Republic",
+                    "Praha": "Czech Republic",
+                    "Прага": "Czech Republic",
+                    "Kyiv": "Ukraine",
+                    "Kiev": "Ukraine",
+                    "Киев": "Ukraine",
+                    "Minsk": "Belarus",
+                    "Минск": "Belarus",
+                    "Vienna": "Austria",
+                    "Wien": "Austria",
+                    "Вена": "Austria",
+                    "Budapest": "Hungary",
+                    "Будапешт": "Hungary",
+                    "Bucharest": "Romania",
+                    "Бухарест": "Romania",
+                    "Sofia": "Bulgaria",
+                    "София": "Bulgaria",
+                    "Belgrade": "Serbia",
+                    "Белград": "Serbia"
+                }
+                
+                # Проверяем, есть ли город в словаре известных
+                for known_name, correct_country in known_cities.items():
+                    if (city_name.lower() == known_name.lower() or 
+                        query.lower() == known_name.lower()):
+                        country = correct_country
+                        break
+                
+                # Если страна не определена или это Россия для заведомо не российского города
+                if not country or (country == "Russia" and city_name.lower() not in 
+                    ["moscow", "москва", "saint petersburg", "санкт-петербург", "novosibirsk", "новосибирск"]):
+                    # Пробуем определить по координатам
+                    corrected_country = self._get_country_from_coords(
+                        result.get("latitude", 0), 
+                        result.get("longitude", 0)
+                    )
+                    if corrected_country:
+                        country = corrected_country
+                
                 locations.append(Location(
-                    name=result.get("name", ""),
-                    country=result.get("country", ""),
+                    name=city_name,
+                    country=country,
                     latitude=result.get("latitude", 0),
                     longitude=result.get("longitude", 0)
                 ))
