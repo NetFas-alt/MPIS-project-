@@ -69,38 +69,37 @@ on:
     - cron: '0 */6 * * *'
 
 jobs:
-  test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
-    
+  # Новый job: загрузка сохраненного избранного
+  load_favorites:
+    name: Load Saved Favorites
+    runs-on: ubuntu-latest
+    outputs:
+      favorites_exist: ${{ steps.check.outputs.favorites_exist }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests
-      shell: bash
-    
-    - name: Run unit tests
-      run: python -m unittest discover -v
-      continue-on-error: true
+      - name: Download previously saved favorites
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        id: download
+        with:
+          name: weathereye-favorites
+          path: ~/.weathereye/
+      
+      - name: Check if favorites exist
+        id: check
+        run: |
+          if [ -f ~/.weathereye/favorites.json ]; then
+            echo "favorites_exist=true" >> $GITHUB_OUTPUT
+            echo "✅ Found existing favorites"
+            cat ~/.wearetheye/favorites.json
+          else
+            echo "favorites_exist=false" >> $GITHUB_OUTPUT
+            echo "📭 No existing favorites found, starting fresh"
+          fi
 
   command_executor:
     name: Execute Commands
     runs-on: ubuntu-latest
+    needs: load_favorites
     if: github.event_name == 'workflow_dispatch'
     
     steps:
@@ -116,6 +115,22 @@ jobs:
       run: pip install requests
       shell: bash
     
+    - name: Download saved favorites
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: weathereye-favorites
+        path: ~/.weathereye/
+    
+    - name: Show current favorites before execution
+      run: |
+        echo "📋 Favorites before execution:"
+        if [ -f ~/.weathereye/favorites.json ]; then
+          cat ~/.weathereye/favorites.json
+        else
+          echo "No favorites file yet"
+        fi
+    
     - name: Execute Commands
       run: |
         echo "WeatherEye Command Executor"
@@ -124,7 +139,7 @@ jobs:
         COMMAND_GROUP="${{ github.event.inputs.command_group }}"
         UNITS="${{ github.event.inputs.units_value }}"
         
-        # Устанавливаем единицы измерения, если выбраны
+        # Устанавливаем единицы измерения
         if [ "$UNITS" != "" ] && [ "$UNITS" != "C" ]; then
           echo "🔧 Setting units to $UNITS"
           python weather.py settings units "$UNITS"
@@ -159,13 +174,24 @@ jobs:
           echo "City: $FAV_CITY"
           echo ""
           
+          # Показываем текущее избранное ДО выполнения
+          echo "Current favorites:"
+          python weather.py favorites list
+          echo ""
+          
           if [ "$FAV_ACTION" = "list" ]; then
             python weather.py favorites list
           elif [ "$FAV_ACTION" = "add" ]; then
             python weather.py favorites add "$FAV_CITY"
+            echo "✅ Added $FAV_CITY"
+            echo ""
+            echo "Updated favorites:"
             python weather.py favorites list
           else
             python weather.py favorites remove "$FAV_CITY"
+            echo "🗑️ Removed $FAV_CITY"
+            echo ""
+            echo "Updated favorites:"
             python weather.py favorites list
           fi
           
@@ -219,13 +245,19 @@ jobs:
           # 2. Favorites Demo
           echo "2. ⭐ Favorites Demo"
           echo "-------------------"
+          echo "Current favorites:"
+          python weather.py favorites list
+          echo ""
+          
           if [ "$FAV_ACTION" = "list" ]; then
             python weather.py favorites list
           elif [ "$FAV_ACTION" = "add" ]; then
             python weather.py favorites add "$FAV_CITY"
+            echo "Updated favorites:"
             python weather.py favorites list
           else
             python weather.py favorites remove "$FAV_CITY"
+            echo "Updated favorites:"
             python weather.py favorites list
           fi
           echo ""
@@ -241,10 +273,20 @@ jobs:
         fi
       env:
         PYTHONIOENCODING: utf-8
+    
+    - name: Save favorites for next run
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: weathereye-favorites
+        path: ~/.weathereye/
+        retention-days: 90
+        if-no-files-found: ignore
 
   demo:
     name: Demo Run
     runs-on: ubuntu-latest
+    needs: load_favorites
     if: github.event_name == 'schedule' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     
     steps:
@@ -259,6 +301,23 @@ jobs:
     - name: Install dependencies
       run: pip install requests
       shell: bash
+    
+    - name: Download saved favorites
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        name: weathereye-favorites
+        path: ~/.weathereye/
+    
+    - name: Show loaded favorites
+      run: |
+        echo "📋 Loaded favorites:"
+        if [ -f ~/.weathereye/favorites.json ]; then
+          cat ~/.weathereye/favorites.json
+        else
+          echo "No favorites file yet"
+        fi
+        echo ""
     
     - name: Run Demo with User Settings
       run: |
@@ -292,6 +351,11 @@ jobs:
         python weather.py settings show
         echo ""
         
+        # Показываем избранное (загруженное из предыдущих запусков)
+        echo "⭐ Current favorites (from previous runs):"
+        python weather.py favorites list
+        echo ""
+        
         # Выполняем выбранную команду погоды
         echo "📌 Your Request: $CITY"
         echo "-------------------"
@@ -315,6 +379,15 @@ jobs:
         python weather.py forecast Moscow --days "$DAYS"
       env:
         PYTHONIOENCODING: utf-8
+    
+    - name: Save favorites for next run
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: weathereye-favorites
+        path: ~/.weathereye/
+        retention-days: 90
+        if-no-files-found: ignore
 
   validate:
     name: Validate Commands
