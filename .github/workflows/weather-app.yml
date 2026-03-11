@@ -69,7 +69,7 @@ on:
     - cron: '0 */6 * * *'
 
 jobs:
-  # Новый job: загрузка сохраненного избранного
+  # Job для загрузки сохраненного избранного
   load_favorites:
     name: Load Saved Favorites
     runs-on: ubuntu-latest
@@ -90,11 +90,43 @@ jobs:
           if [ -f ~/.weathereye/favorites.json ]; then
             echo "favorites_exist=true" >> $GITHUB_OUTPUT
             echo "✅ Found existing favorites"
-            cat ~/.wearetheye/favorites.json
+            cat ~/.weathereye/favorites.json
           else
             echo "favorites_exist=false" >> $GITHUB_OUTPUT
             echo "📭 No existing favorites found, starting fresh"
+            # Создаем пустой файл для первого запуска
+            mkdir -p ~/.weathereye
+            echo '{"cities": []}' > ~/.weathereye/favorites.json
           fi
+
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11"]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+      shell: bash
+    
+    - name: Run unit tests
+      run: python -m unittest discover -v
+      continue-on-error: true
 
   command_executor:
     name: Execute Commands
@@ -118,17 +150,21 @@ jobs:
     - name: Download saved favorites
       uses: actions/download-artifact@v4
       continue-on-error: true
+      id: download_favorites
       with:
         name: weathereye-favorites
         path: ~/.weathereye/
     
-    - name: Show current favorites before execution
+    - name: Initialize favorites if needed
       run: |
-        echo "📋 Favorites before execution:"
-        if [ -f ~/.weathereye/favorites.json ]; then
-          cat ~/.weathereye/favorites.json
+        if [ ! -f ~/.weathereye/favorites.json ]; then
+          echo "📭 First run or no saved favorites - creating empty file"
+          mkdir -p ~/.weathereye
+          echo '{"cities": []}' > ~/.weathereye/favorites.json
         else
-          echo "No favorites file yet"
+          echo "✅ Loaded favorites from previous run"
+          echo "Current favorites:"
+          cat ~/.weathereye/favorites.json
         fi
     
     - name: Execute Commands
@@ -305,18 +341,23 @@ jobs:
     - name: Download saved favorites
       uses: actions/download-artifact@v4
       continue-on-error: true
+      id: download_demo
       with:
         name: weathereye-favorites
         path: ~/.weathereye/
     
-    - name: Show loaded favorites
+    - name: Initialize favorites for demo
       run: |
-        echo "📋 Loaded favorites:"
-        if [ -f ~/.weathereye/favorites.json ]; then
-          cat ~/.weathereye/favorites.json
+        if [ ! -f ~/.weathereye/favorites.json ]; then
+          echo "📭 First run or no saved favorites - creating empty file for demo"
+          mkdir -p ~/.weathereye
+          echo '{"cities": []}' > ~/.weathereye/favorites.json
         else
-          echo "No favorites file yet"
+          echo "✅ Loaded favorites from previous run"
         fi
+        
+        echo "📋 Loaded favorites:"
+        cat ~/.weathereye/favorites.json
         echo ""
     
     - name: Run Demo with User Settings
