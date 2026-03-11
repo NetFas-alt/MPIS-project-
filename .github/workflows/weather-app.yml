@@ -159,8 +159,7 @@ jobs:
         COMMAND_GROUP="${{ github.event.inputs.command_group }}"
         SETTINGS_ACTION="${{ github.event.inputs.settings_action }}"
         
-        # ИСПРАВЛЕНИЕ: Правильная обработка дней
-        # Убираем кавычки и пробелы
+        # Правильная обработка дней
         DAYS_RAW=$(echo "$DAYS_RAW" | tr -d '"' | xargs)
         
         # Проверяем, что это число
@@ -387,20 +386,31 @@ jobs:
           python weather.py forecast "$CITY" --days "$DAYS"
           echo ""
           
-          # ========== ИСПРАВЛЕНИЕ: ADDITIONAL CITIES ИЗ ИЗБРАННОГО ==========
+          # ========== ИСПРАВЛЕНИЕ: ADDITIONAL CITIES ИЗ ИЗБРАННОГО (улучшенный парсинг) ==========
           echo "5. 📋 ADDITIONAL CITIES FROM FAVORITES"
           echo "-------------------------------------"
           
-          # Получаем список избранных городов через временный файл
-          python weather.py favorites list > /tmp/favorites_output.txt
+          # Создаем временный файл для городов
+          > /tmp/favorites_cities.txt
           
-          # Извлекаем города из формата "  N. 'Город'"
-          grep -o "'.*'" /tmp/favorites_output.txt | tr -d "'" > /tmp/favorites_cities.txt
+          # Получаем вывод избранного и парсим его построчно
+          python weather.py favorites list | while IFS= read -r line; do
+            # Ищем строки формата: "  N. 'Город'" (пробелы, цифра, точка, пробел, кавычка, город, кавычка)
+            if [[ "$line" =~ ^[[:space:]]*[0-9]+\.[[:space:]]+\'(.*)\'$ ]]; then
+              city="${BASH_REMATCH[1]}"
+              # Дополнительная проверка: город не должен содержать служебные слова
+              if [[ ! "$city" =~ ^(Список|Файл|пуст|favorites|json)$ ]] && [ ! -z "$city" ]; then
+                echo "$city" >> /tmp/favorites_cities.txt
+              fi
+            fi
+          done
           
+          # Проверяем, есть ли города
           if [ ! -s /tmp/favorites_cities.txt ]; then
             echo "📭 Нет избранных городов для показа"
           else
             echo "Показываем погоду для городов из избранного:"
+            # Читаем города из файла и показываем погоду
             while IFS= read -r fav_city; do
               if [ ! -z "$fav_city" ] && [ "$fav_city" != "$CITY" ]; then
                 echo ""
@@ -411,7 +421,7 @@ jobs:
           fi
           
           # Очистка
-          rm -f /tmp/favorites_output.txt /tmp/favorites_cities.txt
+          rm -f /tmp/favorites_cities.txt
         fi
     
     # СОХРАНЯЕМ ИЗБРАННОЕ С ДИАГНОСТИКОЙ
@@ -425,7 +435,7 @@ jobs:
         echo "File content before save:"
         cat ~/.weathereye/favorites.json
         echo ""
-        # Принудительно сохраняем через команду list (она читает файл)
+        # Принудительно сохраняем через команду list
         python weather.py favorites list > /dev/null
         echo "✅ Favorites saved"
         echo "File content after:"
