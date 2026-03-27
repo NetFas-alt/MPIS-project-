@@ -1,0 +1,1220 @@
+Часть 1: Импорты и настройка кодировки для Windows
+python
+#!/usr/bin/env python3
+"""
+WeatherEye - CLI приложение для просмотра погоды
+Единый файл, содержит всё необходимое для работы.
+"""
+
+import os
+import sys
+import json
+import argparse
+import requests
+from pathlib import Path
+from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict, Any, Tuple
+from enum import Enum
+Описание: Подключаются все необходимые библиотеки. argparse для парсинга командной строки, requests для HTTP-запросов к API, dataclass для создания простых классов-моделей, pathlib для удобной работы с путями файлов.
+
+python
+# Настройка кодировки для Windows
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+Описание: Для Windows принудительно устанавливается кодировка UTF-8. Это необходимо, чтобы русский текст и эмодзи (🌤️, ☁️, 💧) корректно отображались в консоли.
+
+Часть 2: Класс конфигурации Settings
+python
+# ==================== КОНФИГУРАЦИЯ ====================
+
+class Settings:
+    """Настройки приложения"""
+    # API ключи (для демо используем открытые API)
+    GEO_API_URL = "https://geocoding-api.open-meteo.com/v1/search"
+    WEATHER_API_URL = "https://api.open-meteo.com/v1/forecast"
+    
+    # Параметры приложения
+    DEFAULT_UNITS = "C"
+    DEFAULT_FORECAST_DAYS = 3
+    CACHE_TTL_MINUTES = 10
+    NETWORK_TIMEOUT_SECONDS = 5
+    
+    # Пути для хранения данных
+    APP_DATA_DIR = Path.home() / ".weathereye"
+    FAVORITES_FILE = APP_DATA_DIR / "favorites.json"
+    SETTINGS_FILE = APP_DATA_DIR / "settings.json"
+    
+    @classmethod
+    def ensure_dirs(cls):
+        """Создание директорий для хранения данных"""
+        cls.APP_DATA_DIR.mkdir(exist_ok=True)
+
+# Инициализация директорий
+Settings.ensure_dirs()
+Описание: Класс Settings хранит все константы приложения:
+
+URL для геокодинга и погоды
+
+Значения по умолчанию (единицы измерения, количество дней прогноза)
+
+Время жизни кэша (10 минут) и таймаут сети (5 секунд)
+
+Пути к файлам данных в папке ~/.weathereye/
+Метод ensure_dirs() создаёт эту папку, если её нет. Приложение создаёт файлы favorites.json и settings.json для хранения избранного и настроек.
+
+Часть 3: Модели предметной области (Domain Models)
+python
+# ==================== DOMAIN МОДЕЛИ ====================
+
+@dataclass
+class Location:
+    """Географическое местоположение"""
+    name: str
+    country: str
+    latitude: float
+    longitude: float
+    
+    def __str__(self):
+        return f"{self.name}, {self.country}"
+Описание: Location — модель географического местоположения. Хранит название города, страну, широту и долготу. Метод __str__ используется для красивого вывода в формате "Москва, Россия".
+
+python
+@dataclass
+class CurrentWeather:
+    """Текущая погода"""
+    location: Location
+    temperature: float      # в градусах Цельсия
+    feels_like: float       # в градусах Цельсия
+    humidity: int           # 0-100%
+    wind_speed: float       # м/с
+    description: str
+    icon: str
+    last_updated: datetime
+    
+    @property
+    def temperature_c(self) -> float:
+        return self.temperature
+    
+    @property
+    def temperature_f(self) -> float:
+        return (self.temperature * 9/5) + 32
+Описание: CurrentWeather — модель текущей погоды. Содержит:
+
+location — объект Location с информацией о городе
+
+temperature и feels_like — фактическая и ощущаемая температура в Цельсиях
+
+humidity — влажность в процентах
+
+wind_speed — скорость ветра в м/с
+
+description — текстовое описание погоды (например, "Пасмурно")
+
+icon — эмодзи для визуального отображения (☀️, ☁️, 🌧️)
+
+last_updated — время последнего обновления
+Свойства temperature_c и temperature_f используются для конвертации температуры в нужные единицы.
+
+python
+@dataclass
+class DailyForecast:
+    """Прогноз на день"""
+    location: Location
+    date: datetime
+    min_temperature: float
+    max_temperature: float
+    description: str
+    icon: str
+Описание: DailyForecast — модель прогноза на один день. Хранит:
+
+location — город
+
+date — дата прогноза
+
+min_temperature и max_temperature — минимальная и максимальная температура
+
+description и icon — описание и иконка погоды
+
+python
+@dataclass
+class AppSettings:
+    """Настройки приложения"""
+    units: str = "C"  # "C" или "F"
+    
+    def validate(self):
+        if self.units not in ("C", "F"):
+            raise ValueError("Units must be 'C' or 'F'")
+Описание: AppSettings — модель настроек пользователя. Поле units определяет, в каких единицах отображать температуру (Цельсий или Фаренгейт). Метод validate() проверяет корректность значения.
+
+Часть 4: Классы ошибок
+python
+# ==================== ОШИБКИ ====================
+
+class ErrorType(Enum):
+    """Типы ошибок приложения"""
+    NOT_FOUND = "not_found"
+    NETWORK = "network"
+    RATE_LIMIT = "rate_limit"
+    INVALID_INPUT = "invalid_input"
+    STORAGE = "storage"
+    UNKNOWN = "unknown"
+Описание: ErrorType — перечисление возможных типов ошибок. Это позволяет классифицировать ошибки и по-разному обрабатывать их.
+
+python
+class AppError(Exception):
+    """Базовый класс для ошибок приложения"""
+    def __init__(self, message: str, error_type: ErrorType, original_error: Exception = None):
+        self.message = message
+        self.error_type = error_type
+        self.original_error = original_error
+        super().__init__(self.message)
+Описание: AppError — базовый класс для всех ошибок приложения. Хранит сообщение, тип ошибки и оригинальное исключение (если есть).
+
+python
+class CityNotFoundError(AppError):
+    def __init__(self, city: str):
+        super().__init__(
+            f"City not found: '{city}'",
+            ErrorType.NOT_FOUND
+        )
+Описание: Ошибка, возникающая когда город не найден в API геокодинга.
+
+python
+class NetworkError(AppError):
+    def __init__(self, original_error: Exception = None):
+        super().__init__(
+            "Network problem. Check your connection and try again later.",
+            ErrorType.NETWORK,
+            original_error
+        )
+Описание: Ошибка сети — проблемы с интернетом, таймаут или недоступность API.
+
+python
+class RateLimitError(AppError):
+    def __init__(self):
+        super().__init__(
+            "Rate limit exceeded. Wait a few seconds and retry.",
+            ErrorType.RATE_LIMIT
+        )
+Описание: Ошибка превышения лимита запросов к API (обычно 60 запросов в минуту на бесплатных тарифах).
+
+python
+class InvalidInputError(AppError):
+    def __init__(self, message: str):
+        super().__init__(
+            message,
+            ErrorType.INVALID_INPUT
+        )
+Описание: Ошибка некорректного ввода (например, пустое название города).
+
+python
+class StorageError(AppError):
+    def __init__(self, message: str, original_error: Exception = None):
+        super().__init__(
+            message,
+            ErrorType.STORAGE,
+            original_error
+        )
+Описание: Ошибка работы с файлами — проблема при чтении или записи JSON-файлов.
+
+Часть 5: DTO (Data Transfer Objects)
+python
+# ==================== DTO ====================
+
+@dataclass
+class GeoApiResponseDTO:
+    """DTO для ответа API геокодинга"""
+    results: List[Dict[str, Any]] = field(default_factory=list)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'GeoApiResponseDTO':
+        return cls(results=data.get("results", []))
+Описание: GeoApiResponseDTO — объект для передачи данных от API геокодинга. Метод from_dict создаёт DTO из JSON-ответа, извлекая список результатов.
+
+python
+@dataclass
+class WeatherApiResponseDTO:
+    """DTO для ответа API погоды"""
+    latitude: float
+    longitude: float
+    current: Dict[str, Any]
+    daily: Dict[str, List]
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'WeatherApiResponseDTO':
+        return cls(
+            latitude=data.get("latitude", 0),
+            longitude=data.get("longitude", 0),
+            current=data.get("current", {}),
+            daily=data.get("daily", {})
+        )
+Описание: WeatherApiResponseDTO — объект для передачи данных от API погоды. Извлекает координаты, текущие данные и ежедневный прогноз.
+
+python
+@dataclass
+class FavoritesFileDTO:
+    """DTO для файла с избранными городами"""
+    cities: List[str] = field(default_factory=list)
+    
+    def to_dict(self) -> Dict[str, List[str]]:
+        return {"cities": self.cities}
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'FavoritesFileDTO':
+        return cls(cities=data.get("cities", []))
+Описание: FavoritesFileDTO — объект для работы с файлом избранного. Преобразует список городов в JSON-объект и обратно.
+
+python
+@dataclass
+class SettingsFileDTO:
+    """DTO для файла настроек"""
+    units: str = "C"
+    
+    def to_dict(self) -> Dict[str, str]:
+        return {"units": self.units}
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SettingsFileDTO':
+        return cls(units=data.get("units", "C"))
+Описание: SettingsFileDTO — объект для работы с файлом настроек. Хранит выбранные единицы измерения.
+
+Часть 6: Кэширование
+python
+# ==================== КЭШ ====================
+
+class CacheEntry:
+    """Запись в кэше"""
+    def __init__(self, value: Any, ttl_minutes: int):
+        self.value = value
+        self.expires_at = datetime.now() + timedelta(minutes=ttl_minutes)
+    
+    @property
+    def is_expired(self) -> bool:
+        return datetime.now() > self.expires_at
+Описание: CacheEntry — запись в кэше. Хранит значение и время, когда оно станет недействительным. Свойство is_expired проверяет, истёк ли срок годности записи.
+
+python
+class Cache:
+    """Простой in-memory кэш"""
+    
+    def __init__(self):
+        self._storage: Dict[str, CacheEntry] = {}
+        self.default_ttl = Settings.CACHE_TTL_MINUTES
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Получение значения из кэша"""
+        entry = self._storage.get(key)
+        if entry and not entry.is_expired:
+            return entry.value
+        elif entry and entry.is_expired:
+            del self._storage[key]
+        return None
+    
+    def set(self, key: str, value: Any, ttl_minutes: Optional[int] = None):
+        """Сохранение значения в кэш"""
+        ttl = ttl_minutes if ttl_minutes is not None else self.default_ttl
+        self._storage[key] = CacheEntry(value, ttl)
+    
+    def clear(self):
+        """Очистка кэша"""
+        self._storage.clear()
+    
+    def remove(self, key: str):
+        """Удаление конкретного ключа"""
+        if key in self._storage:
+            del self._storage[key]
+Описание: Cache — in-memory кэш. Данные хранятся в словаре _storage, ключом является название города. Метод get возвращает значение, если оно существует и не истекло, иначе удаляет устаревшую запись. Метод set добавляет новую запись с указанным TTL (по умолчанию 10 минут). Кэш позволяет сократить количество запросов к API при повторных запросах одного и того же города.
+
+Часть 7: Провайдер геокодинга (GeoProvider)
+python
+# ==================== ПРОВАЙДЕРЫ ====================
+
+class GeoProvider:
+    """Провайдер для геокодинга (поиск координат по названию города)"""
+    
+    def __init__(self):
+        self.base_url = Settings.GEO_API_URL
+        self.timeout = Settings.NETWORK_TIMEOUT_SECONDS
+Описание: GeoProvider отвечает за преобразование названия города в координаты (широту и долготу). При инициализации получает URL API и таймаут из настроек.
+
+python
+    def _get_country_from_coords(self, lat: float, lon: float) -> str:
+        """Определение страны по координатам через обратное геокодирование"""
+        try:
+            # Используем бесплатный Nominatim API (OpenStreetMap)
+            url = "https://nominatim.openstreetmap.org/reverse"
+            params = {
+                "lat": lat,
+                "lon": lon,
+                "format": "json",
+                "zoom": 3  # Уровень для получения страны
+            }
+            headers = {
+                "User-Agent": "WeatherEye/1.0"
+            }
+            
+            response = requests.get(url, params=params, headers=headers, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                address = data.get("address", {})
+                country = address.get("country", "")
+                if country:
+                    return country
+        except:
+            pass
+        return ""
+Описание: Вспомогательный метод, который по координатам определяет страну через Nominatim API (OpenStreetMap). Используется для исправления случаев, когда API геокодинга возвращает неверную страну. В случае ошибки возвращает пустую строку.
+
+python
+    def search(self, query: str) -> List[Location]:
+        """
+        Поиск города по названию
+        Возвращает список возможных местоположений
+        """
+        if not query or not query.strip():
+            return []
+        
+        try:
+            params = {
+                "name": query.strip(),
+                "count": 5,
+                "language": "ru",
+                "format": "json"
+            }
+            
+            response = requests.get(
+                self.base_url,
+                params=params,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            dto = GeoApiResponseDTO.from_dict(data)
+            
+            locations = []
+            for result in dto.results:
+                country = result.get("country", "")
+                city_name = result.get("name", "")
+Описание: Основной метод поиска. Отправляет запрос к API геокодинга с параметрами: название города, максимум 5 результатов, русский язык. Получает JSON, преобразует в DTO и начинает обработку каждого результата.
+
+python
+                # Словарь известных городов и их правильных стран
+                known_cities = {
+                    "Warsaw": "Poland",
+                    "Варшава": "Poland",
+                    "Warszawa": "Poland",
+                    "Prague": "Czech Republic",
+                    "Praha": "Czech Republic",
+                    "Прага": "Czech Republic",
+                    "Kyiv": "Ukraine",
+                    "Kiev": "Ukraine",
+                    "Киев": "Ukraine",
+                    "Minsk": "Belarus",
+                    "Минск": "Belarus",
+                    "Vienna": "Austria",
+                    "Wien": "Austria",
+                    "Вена": "Austria",
+                    "Budapest": "Hungary",
+                    "Будапешт": "Hungary",
+                    "Bucharest": "Romania",
+                    "Бухарест": "Romania",
+                    "Sofia": "Bulgaria",
+                    "София": "Bulgaria",
+                    "Belgrade": "Serbia",
+                    "Белград": "Serbia",
+                    "Washington": "USA",
+                    "Вашингтон": "USA"
+                }
+                
+                # Проверяем, есть ли город в словаре известных
+                for known_name, correct_country in known_cities.items():
+                    if (city_name.lower() == known_name.lower() or 
+                        query.lower() == known_name.lower()):
+                        country = correct_country
+                        break
+Описание: Словарь known_cities содержит названия городов (на разных языках) и их правильные страны. Если город из запроса или результат API совпадает с одним из известных, страна исправляется. Это решает проблему, когда API возвращает "Россия" для Варшавы или Киева.
+
+python
+                # Если страна не определена или это Россия для заведомо не российского города
+                if not country or (country == "Russia" and city_name.lower() not in 
+                    ["moscow", "москва", "saint petersburg", "санкт-петербург", "novosibirsk", "новосибирск"]):
+                    # Пробуем определить по координатам
+                    corrected_country = self._get_country_from_coords(
+                        result.get("latitude", 0), 
+                        result.get("longitude", 0)
+                    )
+                    if corrected_country:
+                        country = corrected_country
+                
+                locations.append(Location(
+                    name=city_name,
+                    country=country,
+                    latitude=result.get("latitude", 0),
+                    longitude=result.get("longitude", 0)
+                ))
+            
+            if not locations:
+                raise CityNotFoundError(query)
+            
+            return locations
+Описание: Если страна не определена, или API вернул "Russia" для города, который не является российским (не Москва, не Санкт-Петербург), выполняется обратное геокодирование по координатам для уточнения страны. Затем создаётся объект Location и добавляется в список.
+
+python
+        except requests.exceptions.Timeout:
+            raise NetworkError()
+        except requests.exceptions.ConnectionError:
+            raise NetworkError()
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                raise RateLimitError()
+            raise NetworkError()
+        except Exception as e:
+            raise NetworkError(e)
+Описание: Обработка ошибок при запросе к API. Таймаут и проблемы с соединением превращаются в NetworkError. HTTP-ошибка 429 (слишком много запросов) превращается в RateLimitError. Остальные исключения также оборачиваются в NetworkError.
+
+Часть 8: Провайдер погоды (WeatherProvider)
+python
+class WeatherProvider:
+    """Провайдер для получения данных о погоде"""
+    
+    def __init__(self):
+        self.base_url = Settings.WEATHER_API_URL
+        self.timeout = Settings.NETWORK_TIMEOUT_SECONDS
+Описание: WeatherProvider отвечает за получение данных о погоде от API. При инициализации получает URL и таймаут из настроек.
+
+python
+    def get_current(self, location: Location) -> CurrentWeather:
+        """Получение текущей погоды для местоположения"""
+        try:
+            params = {
+                "latitude": location.latitude,
+                "longitude": location.longitude,
+                "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m",
+                "timezone": "auto"
+            }
+            
+            response = requests.get(
+                self.base_url,
+                params=params,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            dto = WeatherApiResponseDTO.from_dict(data)
+            
+            # Преобразование кода погоды в описание
+            weather_code = dto.current.get("weather_code", 0)
+            description = self._code_to_description(weather_code)
+            
+            return CurrentWeather(
+                location=location,
+                temperature=dto.current.get("temperature_2m", 0),
+                feels_like=dto.current.get("apparent_temperature", 0),
+                humidity=dto.current.get("relative_humidity_2m", 0),
+                wind_speed=dto.current.get("wind_speed_10m", 0) / 3.6,  # км/ч -> м/с
+                description=description,
+                icon=self._code_to_icon(weather_code),
+                last_updated=datetime.now()
+            )
+Описание: Метод get_current запрашивает текущую погоду по координатам. Параметры запроса включают температуру, влажность, ощущаемую температуру, код погоды, скорость ветра. После получения ответа извлекается код погоды, который преобразуется в описание и иконку. Скорость ветра конвертируется из км/ч в м/с. Возвращается объект CurrentWeather.
+
+python
+        except requests.exceptions.Timeout:
+            raise NetworkError()
+        except requests.exceptions.ConnectionError:
+            raise NetworkError()
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                raise RateLimitError()
+            raise NetworkError()
+        except Exception as e:
+            raise NetworkError(e)
+Описание: Обработка ошибок, аналогичная GeoProvider.
+
+python
+    # ========== ИСПРАВЛЕНИЕ 1: Правильная обработка days ==========
+    def get_forecast(self, location: Location, days: int = 3) -> List[DailyForecast]:
+        """Получение прогноза на N дней"""
+        # Преобразуем в int и проверяем
+        try:
+            days = int(days)
+        except (ValueError, TypeError):
+            days = 3
+            print(f"⚠️ Некорректное значение дней, используется {days}")
+        
+        # Ограничиваем разумными значениями (API поддерживает до 16)
+        if days < 1:
+            days = 1
+            print("⚠️ Минимальное количество дней - 1")
+        elif days > 16:
+            days = 16
+            print("⚠️ Максимальное количество дней - 16")
+        
+        print(f"📅 Запрос прогноза на {days} дней для {location.name}")
+Описание: Метод get_forecast запрашивает прогноз погоды. Сначала валидирует количество дней: преобразует в int, проверяет диапазон 1-16, выводит предупреждения при некорректных значениях.
+
+python
+        try:
+            params = {
+                "latitude": location.latitude,
+                "longitude": location.longitude,
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+                "forecast_days": days,
+                "timezone": "auto"
+            }
+            
+            response = requests.get(
+                self.base_url,
+                params=params,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            dto = WeatherApiResponseDTO.from_dict(data)
+            
+            forecasts = []
+            daily = dto.daily
+            
+            dates = daily.get("time", [])
+            max_temps = daily.get("temperature_2m_max", [])
+            min_temps = daily.get("temperature_2m_min", [])
+            weather_codes = daily.get("weather_code", [])
+            
+            # Берем минимум из запрошенных дней и того, что вернуло API
+            available_days = min(len(dates), days)
+            print(f"✅ Получено данных на {available_days} дней")
+            
+            for i in range(available_days):
+                date = datetime.fromisoformat(dates[i])
+                weather_code = weather_codes[i] if i < len(weather_codes) else 0
+                
+                forecasts.append(DailyForecast(
+                    location=location,
+                    date=date,
+                    min_temperature=min_temps[i] if i < len(min_temps) else 0,
+                    max_temperature=max_temps[i] if i < len(max_temps) else 0,
+                    description=self._code_to_description(weather_code),
+                    icon=self._code_to_icon(weather_code)
+                ))
+            
+            return forecasts
+Описание: Отправляет запрос к API для получения прогноза. Параметры запроса включают максимальную и минимальную температуру, код погоды. API возвращает массивы дат, температур и кодов. Цикл создаёт объекты DailyForecast для каждого дня. Количество обработанных дней — минимум из запрошенного и того, что вернул API.
+
+python
+        except requests.exceptions.Timeout:
+            raise NetworkError()
+        except requests.exceptions.ConnectionError:
+            raise NetworkError()
+        except Exception as e:
+            raise NetworkError(e)
+Описание: Обработка ошибок.
+
+python
+    def _code_to_description(self, code: int) -> str:
+        """Преобразование WMO кода в текстовое описание"""
+        descriptions = {
+            0: "Ясно",
+            1: "Преимущественно ясно",
+            2: "Переменная облачность",
+            3: "Пасмурно",
+            45: "Туман",
+            48: "Изморозь",
+            51: "Легкая морось",
+            53: "Морось",
+            55: "Сильная морось",
+            61: "Небольшой дождь",
+            63: "Дождь",
+            65: "Сильный дождь",
+            71: "Небольшой снег",
+            73: "Снег",
+            75: "Сильный снег",
+            80: "Ливень",
+            81: "Сильный ливень",
+            95: "Гроза",
+        }
+        return descriptions.get(code, "Неизвестно")
+Описание: Преобразует числовой код погоды по стандарту WMO в текстовое описание на русском языке.
+
+python
+    def _code_to_icon(self, code: int) -> str:
+        """Преобразование WMO кода в иконку"""
+        if code == 0:
+            return "☀️"
+        elif code in (1, 2):
+            return "⛅"
+        elif code == 3:
+            return "☁️"
+        elif code in (45, 48):
+            return "🌫️"
+        elif code in (51, 53, 55, 61, 63, 65, 80, 81):
+            return "🌧️"
+        elif code in (71, 73, 75):
+            return "❄️"
+        elif code == 95:
+            return "⛈️"
+        else:
+            return "🌡️"
+Описание: Преобразует код погоды в эмодзи для визуального отображения.
+
+Часть 9: Хранилище (Storage)
+python
+# ==================== ХРАНИЛИЩЕ ====================
+
+class Storage:
+    """Хранилище для настроек и избранных городов"""
+    
+    def __init__(self):
+        self.favorites_file = Settings.FAVORITES_FILE
+        self.settings_file = Settings.SETTINGS_FILE
+Описание: Storage отвечает за чтение и запись файлов с данными пользователя. При инициализации определяет пути к файлам избранного и настроек.
+
+python
+    def load_favorites(self) -> List[str]:
+        """Загрузка списка избранных городов"""
+        try:
+            if not self.favorites_file.exists():
+                return []
+            
+            with open(self.favorites_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                dto = FavoritesFileDTO.from_dict(data)
+                return dto.cities
+                
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Error loading favorites: {e}")
+            return []
+        except Exception as e:
+            print(f"⚠️ Error loading favorites: {e}")
+            return []
+Описание: Загружает список избранных городов из JSON-файла. Если файла нет, возвращает пустой список. При ошибке чтения выводит предупреждение и также возвращает пустой список, чтобы приложение не падало.
+
+python
+    # ========== ИСПРАВЛЕНИЕ 2: Улучшенное сохранение избранного ==========
+    def save_favorites(self, cities: List[str]):
+        """Сохранение списка избранных городов"""
+        try:
+            # Убираем дубликаты и пустые строки
+            clean_cities = []
+            for city in cities:
+                if city and city.strip():
+                    clean_cities.append(city.strip())
+            
+            # Убираем дубликаты сохраняя порядок (сравнение без учета регистра)
+            seen = set()
+            unique_cities = []
+            for city in clean_cities:
+                city_lower = city.lower()
+                if city_lower not in seen:
+                    seen.add(city_lower)
+                    unique_cities.append(city)
+            
+            dto = FavoritesFileDTO(cities=unique_cities)
+            with open(self.favorites_file, 'w', encoding='utf-8') as f:
+                json.dump(dto.to_dict(), f, ensure_ascii=False, indent=2)
+            print(f"✅ Saved {len(unique_cities)} favorites: {unique_cities}")
+                
+        except Exception as e:
+            print(f"⚠️ Error saving favorites: {e}")
+Описание: Сохраняет список избранного в JSON-файл. Перед сохранением:
+
+Удаляет пустые строки и лишние пробелы
+
+Удаляет дубликаты с учётом регистра (Moscow и MOSCOW считаются одним городом)
+
+Сохраняет порядок добавления
+При ошибке выводит предупреждение, но не прерывает работу приложения.
+
+python
+    def load_settings(self) -> AppSettings:
+        """Загрузка настроек"""
+        try:
+            if not self.settings_file.exists():
+                return AppSettings()
+            
+            with open(self.settings_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                dto = SettingsFileDTO.from_dict(data)
+                settings = AppSettings(units=dto.units)
+                settings.validate()
+                return settings
+                
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Error loading settings: {e}")
+            return AppSettings()
+        except Exception as e:
+            print(f"⚠️ Error loading settings: {e}")
+            return AppSettings()
+Описание: Загружает настройки из JSON-файла. Если файла нет или произошла ошибка, возвращает настройки по умолчанию (Цельсий). Валидирует загруженные настройки.
+
+python
+    def save_settings(self, settings: AppSettings):
+        """Сохранение настроек"""
+        try:
+            settings.validate()
+            dto = SettingsFileDTO(units=settings.units)
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(dto.to_dict(), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error saving settings: {e}")
+Описание: Сохраняет настройки в JSON-файл. Перед сохранением валидирует их.
+
+Часть 10: Сценарии использования (Use Cases)
+python
+# ==================== СЦЕНАРИИ ИСПОЛЬЗОВАНИЯ ====================
+
+class WeatherUseCase:
+    """Сценарий: получение погоды для города"""
+    
+    def __init__(self):
+        self.geo_provider = GeoProvider()
+        self.weather_provider = WeatherProvider()
+        self.cache = Cache()
+Описание: WeatherUseCase объединяет провайдеров и кэш для получения погоды. При инициализации создаёт экземпляры провайдеров и кэша.
+
+python
+    # ========== ИСПРАВЛЕНИЕ 3: Добавляем параметр forecast_days ==========
+    def execute(self, city: str, units: str = "C", forecast_days: int = 3) -> Tuple[CurrentWeather, List[DailyForecast]]:
+        """
+        Выполнение сценария: поиск города и получение погоды
+        Возвращает (текущая_погода, прогноз)
+        """
+        if not city or not city.strip():
+            raise InvalidInputError("City is required")
+        
+        # Проверка кэша
+        cache_key = f"{city.strip().lower()}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            print("📦 Использованы данные из кэша")
+            return cached
+        
+        # Поиск города
+        locations = self.geo_provider.search(city)
+        if not locations:
+            raise CityNotFoundError(city)
+        
+        # Берем первый результат
+        location = locations[0]
+        
+        # Получаем погоду
+        current = self.weather_provider.get_current(location)
+        forecast = self.weather_provider.get_forecast(location, forecast_days)
+        
+        result = (current, forecast)
+        
+        # Сохраняем в кэш
+        self.cache.set(cache_key, result)
+        
+        return result
+Описание: Основной метод сценария:
+
+Проверяет корректность ввода
+
+Ищет город в кэше — если есть, возвращает сохранённые данные
+
+Если в кэше нет, ищет город через GeoProvider
+
+Запрашивает текущую погоду и прогноз через WeatherProvider
+
+Сохраняет результат в кэш
+
+Возвращает кортеж (текущая погода, прогноз)
+
+python
+class FavoritesUseCase:
+    """Сценарий: управление избранными городами"""
+    
+    def __init__(self):
+        self.storage = Storage()
+    
+    def list_favorites(self) -> List[str]:
+        """Получить список избранных городов"""
+        return self.storage.load_favorites()
+Описание: FavoritesUseCase управляет избранным. list_favorites возвращает список из хранилища.
+
+python
+    # ========== ИСПРАВЛЕНИЕ 4: Улучшенное добавление (без дубликатов) ==========
+    def add_favorite(self, city: str) -> List[str]:
+        """Добавить город в избранное"""
+        if not city or not city.strip():
+            raise InvalidInputError("City name cannot be empty")
+        
+        favorites = self.storage.load_favorites()
+        city_clean = city.strip()
+        
+        # Проверяем по нижнему регистру
+        city_lower = city_clean.lower()
+        exists = False
+        for existing in favorites:
+            if existing.lower() == city_lower:
+                exists = True
+                break
+        
+        if not exists:
+            favorites.append(city_clean)
+            self.storage.save_favorites(favorites)
+            print(f"✅ Added '{city_clean}' to favorites")
+        else:
+            print(f"ℹ️ '{city_clean}' already in favorites")
+        
+        return favorites
+Описание: Добавляет город в избранное. Проверяет наличие города без учёта регистра, чтобы не добавлять дубликаты. Если город уже есть, выводит уведомление. После добавления сохраняет обновлённый список.
+
+python
+    # ========== ИСПРАВЛЕНИЕ 5: Улучшенное удаление (по нижнему регистру) ==========
+    def remove_favorite(self, city: str) -> List[str]:
+        """Удалить город из избранного"""
+        if not city or not city.strip():
+            raise InvalidInputError("City name cannot be empty")
+        
+        favorites = self.storage.load_favorites()
+        city_clean = city.strip()
+        city_lower = city_clean.lower()
+        
+        # Удаляем по нижнему регистру
+        new_favorites = []
+        removed = False
+        for existing in favorites:
+            if existing.lower() != city_lower:
+                new_favorites.append(existing)
+            else:
+                removed = True
+        
+        if removed:
+            self.storage.save_favorites(new_favorites)
+            print(f"✅ Removed '{city_clean}' from favorites")
+        else:
+            print(f"ℹ️ '{city_clean}' not in favorites")
+        
+        return new_favorites
+Описание: Удаляет город из избранного. Сравнивает названия без учёта регистра, чтобы удалить город независимо от написания. Если город найден, сохраняет обновлённый список.
+
+python
+class SettingsUseCase:
+    """Сценарий: управление настройками"""
+    
+    def __init__(self):
+        self.storage = Storage()
+    
+    def get_settings(self) -> AppSettings:
+        """Получить текущие настройки"""
+        return self.storage.load_settings()
+    
+    def set_units(self, units: str) -> AppSettings:
+        """Установить единицы измерения"""
+        if units.upper() not in ("C", "F"):
+            raise InvalidInputError("Units must be 'C' or 'F'")
+        
+        settings = self.storage.load_settings()
+        settings.units = units.upper()
+        self.storage.save_settings(settings)
+        return settings
+Описание: SettingsUseCase управляет настройками приложения. get_settings возвращает текущие настройки из хранилища. set_units валидирует введённые единицы измерения и сохраняет их.
+
+Часть 11: Форматтеры
+python
+# ==================== ФОРМАТТЕРЫ ====================
+
+def format_temperature(temp_c: float, units: str) -> str:
+    """Форматирование температуры в зависимости от единиц"""
+    if units.upper() == "F":
+        temp = (temp_c * 9/5) + 32
+        return f"{temp:.0f}°F"
+    return f"{temp_c:.0f}°C"
+Описание: Преобразует температуру из Цельсия в нужные единицы и возвращает строку с символом градуса.
+
+python
+def format_wind(speed_ms: float) -> str:
+    """Форматирование скорости ветра"""
+    return f"{speed_ms:.1f} м/с"
+Описание: Форматирует скорость ветра с одним знаком после запятой.
+
+python
+def format_current_weather(weather: CurrentWeather, units: str) -> str:
+    """Форматирование текущей погоды для вывода"""
+    temp = format_temperature(weather.temperature, units)
+    feels = format_temperature(weather.feels_like, units)
+    
+    return (
+        f"{weather.location.name}, {weather.location.country} "
+        f"(обновлено: {weather.last_updated.strftime('%H:%M')})\n"
+        f"{weather.icon} Температура: {temp} (ощущается как {feels})\n"
+        f"💧 Влажность: {weather.humidity}%\n"
+        f"💨 Ветер: {format_wind(weather.wind_speed)}\n"
+        f"☁️ Описание: {weather.description}"
+    )
+Описание: Собирает строку для вывода текущей погоды. Включает:
+
+Название города и страну
+
+Время последнего обновления
+
+Иконку, температуру и ощущаемую температуру
+
+Влажность
+
+Скорость ветра
+
+Описание погоды
+
+python
+def format_forecast(forecasts: List[DailyForecast], units: str) -> str:
+    """Форматирование прогноза для вывода"""
+    if not forecasts:
+        return "Нет данных прогноза"
+    
+    result = ["Прогноз на ближайшие дни:", 
+              "Дата       | Мин/Макс | Описание",
+              "-" * 40]
+    
+    for forecast in forecasts:
+        date = forecast.date.strftime("%Y-%m-%d")
+        min_temp = format_temperature(forecast.min_temperature, units)
+        max_temp = format_temperature(forecast.max_temperature, units)
+        temp_range = f"{min_temp}/{max_temp}"
+        
+        result.append(f"{date} | {temp_range:<10} | {forecast.description}")
+    
+    return "\n".join(result)
+Описание: Форматирует прогноз в виде таблицы. Создаёт заголовок, затем для каждого дня добавляет строку с датой, диапазоном температур и описанием. Использует выравнивание для аккуратного отображения.
+
+Часть 12: Главное CLI приложение (WeatherApp)
+python
+# ==================== ГЛАВНОЕ CLI ПРИЛОЖЕНИЕ ====================
+
+class WeatherApp:
+    """Главный класс CLI приложения"""
+    
+    def __init__(self):
+        self.weather_use_case = WeatherUseCase()
+        self.favorites_use_case = FavoritesUseCase()
+        self.settings_use_case = SettingsUseCase()
+        self.settings = self.settings_use_case.get_settings()
+Описание: WeatherApp — основной класс приложения. При инициализации создаёт экземпляры use case'ов и загружает текущие настройки.
+
+python
+    def run(self):
+        """Запуск приложения с парсингом аргументов"""
+        parser = self._create_parser()
+        args = parser.parse_args()
+        
+        if not hasattr(args, 'func'):
+            parser.print_help()
+            return
+        
+        try:
+            args.func(args)
+        except AppError as e:
+            self._handle_error(e)
+        except KeyboardInterrupt:
+            print("\n👋 До свидания!")
+        except Exception as e:
+            print(f"❌ Неизвестная ошибка: {e}")
+Описание: Метод run:
+
+Создаёт парсер аргументов
+
+Разбирает переданные аргументы
+
+Проверяет, что указана команда (если нет — выводит справку)
+
+Вызывает соответствующий обработчик
+
+Ловит и обрабатывает ошибки
+
+python
+    def _create_parser(self) -> argparse.ArgumentParser:
+        """Создание парсера аргументов командной строки"""
+        parser = argparse.ArgumentParser(
+            description="WeatherEye - узнай погоду в любом городе",
+            epilog="Пример: weather now Moscow"
+        )
+        subparsers = parser.add_subparsers(title="команды", dest="command")
+        
+        # Команда: now
+        now_parser = subparsers.add_parser("now", help="текущая погода")
+        now_parser.add_argument("city", help="название города")
+        now_parser.set_defaults(func=self._cmd_now)
+        
+        # Команда: forecast
+        forecast_parser = subparsers.add_parser("forecast", help="прогноз погоды")
+        forecast_parser.add_argument("city", help="название города")
+        forecast_parser.add_argument("--days", type=int, default=3, help="количество дней (1-16)")
+        forecast_parser.set_defaults(func=self._cmd_forecast)
+        
+        # Команды для избранного
+        fav_parser = subparsers.add_parser("favorites", help="управление избранным")
+        fav_subparsers = fav_parser.add_subparsers(dest="fav_command")
+        
+        fav_list = fav_subparsers.add_parser("list", help="показать избранные города")
+        fav_list.set_defaults(func=self._cmd_fav_list)
+        
+        fav_add = fav_subparsers.add_parser("add", help="добавить город в избранное")
+        fav_add.add_argument("city", help="название города")
+        fav_add.set_defaults(func=self._cmd_fav_add)
+        
+        fav_remove = fav_subparsers.add_parser("remove", help="удалить город из избранного")
+        fav_remove.add_argument("city", help="название города")
+        fav_remove.set_defaults(func=self._cmd_fav_remove)
+        
+        # Команды для настроек
+        settings_parser = subparsers.add_parser("settings", help="настройки")
+        settings_subparsers = settings_parser.add_subparsers(dest="settings_command")
+        
+        settings_show = settings_subparsers.add_parser("show", help="показать настройки")
+        settings_show.set_defaults(func=self._cmd_settings_show)
+        
+        settings_units = settings_subparsers.add_parser("units", help="установить единицы измерения")
+        settings_units.add_argument("value", choices=["C", "F"], help="C или F")
+        settings_units.set_defaults(func=self._cmd_settings_units)
+        
+        return parser
+Описание: Создаёт парсер командной строки с поддержкой вложенных команд:
+
+now <city> — текущая погода
+
+forecast <city> [--days N] — прогноз
+
+favorites list|add|remove — работа с избранным
+
+settings show|units — работа с настройками
+Каждой команде назначается свой обработчик.
+
+python
+    def _cmd_now(self, args):
+        """Обработка команды now"""
+        print(f"🔍 Загрузка погоды для {args.city}...")
+        
+        current, _ = self.weather_use_case.execute(args.city, self.settings.units)
+        
+        print()
+        print(format_current_weather(current, self.settings.units))
+Описание: Обработчик команды now. Выводит сообщение о загрузке, получает погоду через use case и выводит отформатированный результат.
+
+python
+    # ========== ИСПРАВЛЕНИЕ 6: Правильная обработка дней в команде ==========
+    def _cmd_forecast(self, args):
+        """Обработка команды forecast"""
+        # Преобразуем в int
+        try:
+            days = int(args.days)
+        except (ValueError, TypeError):
+            days = 3
+            print(f"⚠️ Некорректное значение, используется {days} дней")
+        
+        # Ограничиваем
+        if days < 1:
+            days = 1
+            print("⚠️ Минимальное количество дней - 1")
+        elif days > 16:
+            days = 16
+            print("⚠️ Максимальное количество дней - 16")
+        
+        print(f"🔍 Загрузка прогноза для {args.city} на {days} дней...")
+        
+        # Передаем days в execute
+        _, forecast = self.weather_use_case.execute(args.city, self.settings.units, days)
+        
+        print()
+        print(format_forecast(forecast[:days], self.settings.units))
+        print(f"✅ Показано {len(forecast[:days])} дней из {days} запрошенных")
+Описание: Обработчик команды forecast:
+
+Валидирует количество дней (1-16)
+
+Передаёт days в use case
+
+Выводит прогноз и отчёт о количестве показанных дней
+
+python
+    # ========== ИСПРАВЛЕНИЕ 7: Улучшенный вывод избранного ==========
+    def _cmd_fav_list(self, args):
+        """Показать список избранных городов"""
+        favorites = self.favorites_use_case.list_favorites()
+        
+        print(f"📋 Список избранных городов ({len(favorites)}):")
+        if not favorites:
+            print("  (пусто)")
+        else:
+            for i, city in enumerate(favorites, 1):
+                print(f"  {i}. '{city}'")
+        
+        # Диагностика
+        fav_file = Settings.FAVORITES_FILE
+        if fav_file.exists():
+            try:
+                with open(fav_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    print(f"📁 Файл: {data}")
+            except:
+                pass
+Описание: Обработчик команды favorites list. Выводит список избранных городов с нумерацией. Для диагностики также показывает содержимое файла JSON.
+
+python
+    def _cmd_fav_add(self, args):
+        """Добавить город в избранное"""
+        favorites = self.favorites_use_case.add_favorite(args.city)
+        print(f"✅ Текущий список: {favorites}")
+Описание: Обработчик команды favorites add. Добавляет город и выводит обновлённый список.
+
+python
+    def _cmd_fav_remove(self, args):
+        """Удалить город из избранного"""
+        favorites = self.favorites_use_case.remove_favorite(args.city)
+        print(f"✅ Текущий список: {favorites}")
+Описание: Обработчик команды favorites remove. Удаляет город и выводит обновлённый список.
+
+python
+    def _cmd_settings_show(self, args):
+        """Показать текущие настройки"""
+        settings = self.settings_use_case.get_settings()
+        units_display = "Цельсий (°C)" if settings.units == "C" else "Фаренгейт (°F)"
+        
+        print("⚙️ Текущие настройки:")
+        print(f"  • Единицы измерения: {units_display}")
+        print(f"  • Директория данных: {Settings.APP_DATA_DIR}")
+Описание: Обработчик команды settings show. Выводит текущие настройки: единицы измерения и путь к папке с данными.
+
+python
+    def _cmd_settings_units(self, args):
+        """Установить единицы измерения"""
+        self.settings = self.settings_use_case.set_units(args.value)
+        units_display = "Цельсий (°C)" if args.value == "C" else "Фаренгейт (°F)"
+        print(f"✅ Единицы измерения изменены на {units_display}")
+Описание: Обработчик команды settings units. Меняет единицы измерения и выводит подтверждение.
+
+python
+    def _handle_error(self, error: AppError):
+        """Обработка ошибок приложения"""
+        messages = {
+            ErrorType.NOT_FOUND: "🔍",
+            ErrorType.NETWORK: "🌐",
+            ErrorType.RATE_LIMIT: "⏳",
+            ErrorType.INVALID_INPUT: "❌",
+            ErrorType.STORAGE: "💾",
+            ErrorType.UNKNOWN: "⚠️"
+        }
+        
+        emoji = messages.get(error.error_type, "❌")
+        print(f"{emoji} Error: {error.message}")
+Описание: Обрабатывает ошибки приложения. Выбирает эмодзи в зависимости от типа ошибки и выводит сообщение пользователю.
+
+Часть 13: Точка входа
+python
+# ==================== ТОЧКА ВХОДА ====================
+
+def main():
+    """Точка входа в приложение"""
+    app = WeatherApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
+Описание: Точка входа в приложение. Создаёт экземпляр WeatherApp и запускает его. Это стандартная конструкция для Python-скриптов, позволяющая запускать файл как самостоятельное приложение.
